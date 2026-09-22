@@ -234,7 +234,7 @@
   <h2 id="pattern">The pattern</h2>
   <p>Three layers, each doing one job:</p>
   <div class="diagram"><b>Client</b> (Claude Code · IDE · any MCP client)
-  │  sees 2 fixed tools — directory + dispatch, never the 78 schemas
+  │  sees 3 fixed tools — directory + dispatch + env lookup, never the 78 schemas
   ▼
 <b>Orchestrator MCP Server</b>   <i>— this repo, ~500 lines</i>
   │  list_specialists returns the live set from the registry;
@@ -364,7 +364,7 @@
       the file retracts it the same way. Retraction is the property a
       compiled built-in list can't offer.</li>
   </ul>
-  <p>The fixed two-tool client surface makes the dynamic set safe to expose:
+  <p>The fixed 3-tool client surface makes the dynamic set safe to expose:
     adding a specialist never renegotiates the client connection — it
     surfaces in the <code>list_specialists</code> directory's
     <em>output</em>, never in the tool listing. Fixed contract, dynamic
@@ -496,7 +496,7 @@
     earn their complexity:</p>
   <ol>
     <li><strong>Dynamic specialist exposure (shipped).</strong> The
-      client sees two fixed tools; specialists are <em>data</em> — one
+      client sees a fixed 3-tool surface; specialists are <em>data</em> — one
       <code>*.specialist.json</code> per specialist, loaded from
       <code>specialists/</code> (product set, versioned) plus a local
       overrides directory on a 30s TTL. Adding or retracting a specialist
@@ -650,10 +650,10 @@
   </ul>
 
   <footer>
-    Reference implementation at <code>Documents/GitHub/Headless</code> —
-    six specialists as one JSON file each (<code>specialists/</code>),
-    the registry/launcher, orchestrator server, corpus layer, probes,
-    and run logs from the live-tenant validation in this document. Demo
+    Reference implementation — six specialists as one JSON file each
+    (<code>specialists/</code>), the registry/launcher, orchestrator
+    server, corpus layer, probes, and run logs from the live-tenant
+    validation in this document. Demo
     artifacts remain in the tenant: <code>orchestrator-probe-app</code>
     (web app pattern), <code>orchestrator-test-te</code> (worker pattern),
     the <code>orchestrator-test</code> resource + <code>orchestrator</code>

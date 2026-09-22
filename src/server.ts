@@ -6,7 +6,7 @@
  *   2. launches a specialist agent loop (fresh or resumed),
  *   3. returns the specialist's compact report.
  *
- * The orchestrator model never sees raw P1 tools; it sees ~4 one-liners.
+ * The orchestrator model never sees raw P1 tools; it sees 3 one-liners.
  * Auth: P1 access token from P1_ACCESS_TOKEN env (see README).
  */
 
@@ -21,17 +21,20 @@ import type { SpecialistEvent } from "./launch.js";
 import { listAll } from "./registry.js";
 import { resolveToken } from "./auth.js";
 import { envIdFromMcpUrl } from "./launch.js";
+import { McpToolClient } from "./engines/mcp-client.js";
 
 const server = new Server(
   { name: "p1-orchestrator", version: "0.1.0" },
   { capabilities: { tools: {} } },
 );
 
-// FIXED-SURFACE exposure: the client sees exactly two tools, forever.
+// FIXED-SURFACE exposure: the client sees three fixed tools, forever.
 // Specialists are discovered via the directory (list_specialists) and
 // invoked via dispatch_specialist — so adding a specialist is a data drop
 // that surfaces in the directory's OUTPUT, never in the tool listing.
-// No client renegotiation, ever: fixed contract, dynamic content.
+// resolve_environment is plumbing, not a specialist: env selection is one
+// tool call, so it gets one tool — no LLM hop. No client renegotiation,
+// ever: fixed contract, dynamic content.
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
     tools: [
@@ -63,9 +66,20 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               description:
                 "Optional: a session_id returned by a previous dispatch of the same specialist, to continue that conversation instead of starting fresh.",
             },
+            environmentId: {
+              type: "string",
+              description:
+                "Optional: the PingOne environment to act on (UUID). Omit to use the deployment default (P1_ENVIRONMENT_ID, else the admin env from P1_MCP_URL). The caller's PingOne permissions decide what is actually reachable — specialists act on whichever env the intent names.",
+            },
           },
           required: ["specialist", "intent"],
         },
+      },
+      {
+        name: "resolve_environment",
+        description:
+          "List the PingOne environments this deployment's identity can reach (id, name, type). Use when no environment is known for a task: pick the right one here, then pass it as dispatch_specialist's environmentId. Pure lookup — no specialist involved.",
+        inputSchema: { type: "object" as const, properties: {} },
       },
     ],
   };
@@ -90,6 +104,83 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         },
       ],
     };
+  }
+
+  // resolve_environment: pure lookup, no LLM. Auth (browser fallback
+  // included), then one listEnvironments call through the live P1 MCP
+  // catalog. The catalog decides what this identity may enumerate.
+  if (name === "resolve_environment") {
+    const mcpUrl = process.env.P1_MCP_URL;
+    if (!mcpUrl) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: "P1_MCP_URL is not set; environment discovery needs the PingOne MCP server URL.",
+          },
+        ],
+        isError: true,
+      };
+    }
+    try {
+      const { token } = await resolveToken(
+        envIdFromMcpUrl(mcpUrl) ?? "",
+        mcpUrl,
+      );
+      const client = new McpToolClient(mcpUrl, token);
+      try {
+        const catalog = await client.listTools();
+        if (!("listEnvironments" in catalog)) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "The connected PingOne MCP server does not expose listEnvironments — ask the caller for the environment ID instead.",
+              },
+            ],
+            isError: true,
+          };
+        }
+        const res = await client.callTool("listEnvironments", {});
+        const text = res.content
+          .map((c) => c.text ?? "")
+          .join("\n");
+        let envs: any[] = [];
+        try {
+          const parsed = JSON.parse(text);
+          envs = parsed._embedded?.environments ?? [];
+        } catch {
+          return {
+            content: [{ type: "text", text: `Unexpected listEnvironments response: ${text.slice(0, 400)}` }],
+            isError: true,
+          };
+        }
+        const defaultEnv =
+          process.env.P1_ENVIRONMENT_ID ??
+          envIdFromMcpUrl(mcpUrl) ??
+          "(none — pass environmentId explicitly)";
+        const lines = [
+          "Environments reachable by this deployment's identity — pass one as dispatch_specialist's environmentId:",
+          "",
+          ...envs.map((e) => `- ${e.id}  ${e.name} (${e.type ?? "unknown type"}${e.region ? `, ${e.region}` : ""})`),
+          "",
+          `Deployment default (used when environmentId is omitted): ${defaultEnv}`,
+        ];
+        return { content: [{ type: "text", text: lines.join("\n") }] };
+      } finally {
+        await client.close().catch(() => {});
+      }
+    } catch (err) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Environment lookup failed: ${err instanceof Error ? err.message : String(err)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
   }
 
   // dispatch_specialist: resolve the specialist from the DYNAMIC registry.
@@ -124,15 +215,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 
   const accessToken = process.env.P1_ACCESS_TOKEN;
-  // Task-target env: explicit config first, else parsed from the MCP URL.
+  // Task-target env, resolved per dispatch: explicit arg → P1_ENVIRONMENT_ID
+  // (deployment default) → the admin env from the MCP URL. PingOne's own
+  // per-env MCP enablement and the caller's roles decide what is reachable,
+  // so a caller may name any env their identity can touch — no second pin.
   const envId =
-    process.env.P1_ENVIRONMENT_ID ?? envIdFromMcpUrl(process.env.P1_MCP_URL ?? "");
+    (typeof args?.environmentId === "string" && args.environmentId.trim()) ||
+    process.env.P1_ENVIRONMENT_ID ||
+    envIdFromMcpUrl(process.env.P1_MCP_URL ?? "");
   if (!envId) {
     return {
       content: [
         {
           type: "text",
-          text: "Cannot resolve the task environment. Set P1_ENVIRONMENT_ID=<env-uuid> and/or P1_MCP_URL=https://mcp.pingone.com/admin/<admin-env-uuid>/mcp (the URL your PingOne MCP server config uses).",
+          text: "Cannot resolve the task environment. Pass environmentId per dispatch, or set P1_ENVIRONMENT_ID / P1_MCP_URL (https://mcp.pingone.com/admin/<admin-env-uuid>/mcp).",
         },
       ],
       isError: true,

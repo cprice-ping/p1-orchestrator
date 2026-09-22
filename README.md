@@ -10,14 +10,15 @@ cross-service flows (scopes live on Resources, granted to Applications via a
 second call) are tribal knowledge each consumer rediscovers.
 
 This repo inverts the ratio. It is a small **orchestrator MCP server** that
-exposes two fixed tools. One is a *directory*; the other dispatches a
-*specialist* — a bounded agent loop holding a curated subset of the raw tools
+exposes a fixed three-tool surface: a specialist *directory*, a
+*dispatcher*, and an environment *lookup*. A specialist is a bounded agent
+loop holding a curated subset of the raw tools
 plus a **playbook**: the procedure, written down. "Onboard an OIDC
 application" becomes one intent, not six raw calls and guesswork.
 
 ```
 Claude Code (or any MCP client)
-    │  sees 2 fixed tools — directory + dispatch, never 78 schemas
+    │  sees 3 fixed tools — directory + dispatch + env lookup, never 78 schemas
     ▼
 p1-orchestrator  (this repo: one local MCP server)
     │  per call: spawn loop → playbook + tool subset → compact report
@@ -78,9 +79,15 @@ claude mcp add p1-orchestrator \
 ```
 
 Env vars: `P1_MCP_URL` (required — your PingOne MCP server URL; the admin
-env UUID inside it is the OAuth login env), `P1_ENVIRONMENT_ID` (task-target
-env; specialists never search for it), `P1_ACCESS_TOKEN` (CI/headless
+env UUID inside it is the OAuth login env), `P1_ENVIRONMENT_ID` (optional
+deployment default for the task env), `P1_ACCESS_TOKEN` (CI/headless
 one-shots), `P1_SPECIALIST_MODEL`, `SPECIALIST_ENGINE`.
+
+**Working across environments:** the task environment is resolved per
+dispatch — pass `environmentId` on `dispatch_specialist` (or let the
+default apply). No environment is pinned by the layer: what's reachable is
+whatever your identity's PingOne permissions cover, discoverable with the
+`resolve_environment` tool.
 
 ## Engines — the registry is model-independent
 
