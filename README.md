@@ -157,3 +157,8 @@ Every specialist run emits three lenses: live MCP progress events (tool calls
 with arg previews, as they happen), a per-run NDJSON audit log at
 `~/.p1-orchestrator/runs/`, and a resumable `session_id` for post-hoc
 interrogation of the specialist's own reasoning.
+
+## License
+
+[MIT](LICENSE) — use it, fork it, ship the pattern. Attribution appreciated,
+not required beyond the copyright line.
