@@ -91,10 +91,14 @@ A specialist is a single `*.specialist.json`:
 
 Two directories hold them:
 
-- **`specialists/` in the repo** — shipped defaults, versioned with the code.
-- **`~/.p1-orchestrator/specialists/`** — your drop-ins; a drop-in overrides a
-  same-name default. Reloaded on a 30s TTL: file appears, next dispatch finds
-  it, no server restart, no client reconnect, no recompile.
+- **`specialists/` in the repo** — the product's specialist set, versioned
+  with the code. Everything here encodes domain knowledge worth transferring
+  (tool subsets, playbooks, tribal knowledge), so all specialists live here.
+- **`~/.p1-orchestrator/specialists/`** — personal overrides only. A drop-in
+  overrides a same-name default; use it to experiment with a playbook edit
+  before committing it, or to add a tenant-specific specialist you wouldn't
+  ship. Reloaded on a 30s TTL: file appears, next dispatch finds it, no
+  server restart, no client reconnect, no recompile.
 
 ## What's here
 

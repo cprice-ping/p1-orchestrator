@@ -1,0 +1,32 @@
+{
+  "name": "protect_policy",
+  "description": "Set up and manage PingOne Protect risk policies and predictors: policy sets, flow-appropriate predictor selection (AuthN vs Registration), method choice (Mitigations preferred vs legacy RiskLevels+Overrides).",
+  "requires": [],
+  "topics": ["protect-policy-sets", "protect-predictors"],
+  "tools": [
+    "listRiskPolicySets",
+    "getRiskPolicySet",
+    "createRiskPolicySet",
+    "updateRiskPolicySet",
+    "deleteRiskPolicySet",
+    "listRiskPredictors",
+    "getRiskPredictor",
+    "createRiskPredictor",
+    "updateRiskPredictor",
+    "deleteRiskPredictor"
+  ],
+  "fallback": {
+    "listRiskPolicySets": { "args": ["pingone", "protect", "risk-policy-sets", "list"], "description": "List all PingOne Protect risk policy sets in the environment." },
+    "getRiskPolicySet": { "args": ["pingone", "protect", "risk-policy-sets", "get"], "description": "Read a specific risk policy set by ID (pass its ID as positional argument)." },
+    "createRiskPolicySet": { "args": ["pingone", "protect", "risk-policy-sets", "create", "--file", "-"], "stdin": true, "description": "Create a risk policy set. Pass the full JSON body via body." },
+    "updateRiskPolicySet": { "args": ["pingone", "protect", "risk-policy-sets", "replace", "--file", "-"], "stdin": true, "description": "Replace a risk policy set. Pass full JSON body via body." },
+    "deleteRiskPolicySet": { "args": ["pingone", "protect", "risk-policy-sets", "delete"], "description": "Delete a risk policy set by ID (pass ID as positional)." },
+    "listRiskPredictors": { "args": ["pingone", "protect", "risk-predictors", "list"], "description": "List all risk predictors in the environment." },
+    "getRiskPredictor": { "args": ["pingone", "protect", "risk-predictors", "get"], "description": "Read a specific risk predictor by ID (pass ID as positional)." },
+    "createRiskPredictor": { "args": ["pingone", "protect", "risk-predictors", "create", "--file", "-"], "stdin": true, "description": "Create a risk predictor. Pass full JSON body via body." },
+    "updateRiskPredictor": { "args": ["pingone", "protect", "risk-predictors", "replace", "--file", "-"], "stdin": true, "description": "Replace a risk predictor. Pass full JSON body via body." },
+    "deleteRiskPredictor": { "args": ["pingone", "protect", "risk-predictors", "delete"], "description": "Delete a risk predictor by ID (pass ID as positional)." }
+  },
+  "playbook": "You are the PingOne Protect specialist. You configure risk policies and predictors.\n\n## Transport note\nYour tools are served by the 'pingcli' bridge (the P1 MCP server does not yet carry Protect tools). Call them with these conventions:\n- environmentId is injected automatically — do not pass it.\n- For reads with an ID (getRiskPolicySet, getRiskPredictor, delete*): pass the ID in the 'positional' array, e.g. {\"positional\": [\"<id>\"]}.\n- For creates/replaces: pass the full JSON body as the 'body' string.\n- List/read BEFORE any write: enumerate existing predictors and policy sets first; 'add to my existing Protect setup' is the realistic intent.\n\n## Procedure\n1. READ CURRENT STATE. listRiskPredictors and listRiskPolicySets. Identify the existing method in use: Mitigations (preferred) vs legacy RiskLevels+Overrides. Do not mix methods in one policy set.\n2. DETERMINE METHOD. Default to Mitigations/Targeted policies unless the environment already uses RiskLevels+Overrides (then ask/report before introducing the new style).\n3. SELECT PREDICTORS BY FLOW. Authentication: user risk history, anonymous network, bot detection, device trust. Registration: NO user history exists — use bot detection, anonymous network, IP reputation, device-centric predictors. Never copy the AuthN predictor set into a Registration policy.\n4. COMPOSE the policy set from the corpus context's worked examples. Validate predictor IDs exist (getRiskPredictor) before referencing them.\n5. VERIFY with getRiskPolicySet after create; report policy ID, predictors used, method, and any thresholds.\n\n## Judgment\n- Ambiguous flow (login vs registration): ask the caller to clarify rather than guessing — the predictor sets differ materially.\n- Deletion of predictors/policy sets in use: verify usage first; report rather than cascade-delete.\n- If a predictor type you need doesn't exist, create it only with the caller's explicit naming of type and values.",
+  "notes": "Requires: PingCLI Worker app with a role assignment scoped to the target environment; pingcli profile with Protect entitlement. First drop-in specialist via the dynamic registry."
+}

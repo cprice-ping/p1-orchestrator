@@ -1,0 +1,239 @@
+{
+  "name": "mfa_policy",
+  "description": "Configure PingOne MFA: device policies, FIDO2/passkey policies, passwordless sign-on policies, and their assignment to applications. Understands authentication-method security properties (phishing-resistant vs not) and how MFA policy maps into Protect risk policies.",
+  "requires": [],
+  "topics": [
+    "mfa-policies",
+    "fido2-passkeys",
+    "passwordless",
+    "protect-policy-sets"
+  ],
+  "tools": [
+    "listMfaDevicePolicies",
+    "getMfaDevicePolicy",
+    "createMfaDevicePolicy",
+    "updateMfaDevicePolicy",
+    "deleteMfaDevicePolicy",
+    "listFido2Policies",
+    "getFido2Policy",
+    "createFido2Policy",
+    "updateFido2Policy",
+    "deleteFido2Policy",
+    "listMfaSettings",
+    "getMfaSettings",
+    "updateMfaSettings",
+    "listSignOnPolicies",
+    "getSignOnPolicy",
+    "createSignOnPolicy",
+    "updateSignOnPolicy",
+    "listSignOnPolicyActions",
+    "createSignOnPolicyAction",
+    "listApplications",
+    "getApplication",
+    "listFlowPolicyAssignments",
+    "createFlowPolicyAssignment"
+  ],
+  "fallback": {
+    "listMfaDevicePolicies": {
+      "args": [
+        "mfa",
+        "mfa-device-policies",
+        "list"
+      ],
+      "description": "List all MFA device policies in the environment."
+    },
+    "getMfaDevicePolicy": {
+      "args": [
+        "mfa",
+        "mfa-device-policies",
+        "get"
+      ],
+      "description": "Read a specific MFA device policy by ID (pass ID as positional)."
+    },
+    "createMfaDevicePolicy": {
+      "args": [
+        "mfa",
+        "mfa-device-policies",
+        "create",
+        "--file",
+        "-"
+      ],
+      "stdin": true,
+      "description": "Create an MFA device policy. Pass the full JSON body via body."
+    },
+    "updateMfaDevicePolicy": {
+      "args": [
+        "mfa",
+        "mfa-device-policies",
+        "replace",
+        "--file",
+        "-"
+      ],
+      "stdin": true,
+      "description": "Replace an MFA device policy. Pass the full JSON body via body."
+    },
+    "deleteMfaDevicePolicy": {
+      "args": [
+        "mfa",
+        "mfa-device-policies",
+        "delete"
+      ],
+      "description": "Delete an MFA device policy by ID (pass ID as positional)."
+    },
+    "listFido2Policies": {
+      "args": [
+        "mfa",
+        "fido2-policies",
+        "list"
+      ],
+      "description": "List all FIDO2/passkey policies in the environment."
+    },
+    "getFido2Policy": {
+      "args": [
+        "mfa",
+        "fido2-policies",
+        "get"
+      ],
+      "description": "Read a specific FIDO2 policy by ID (pass ID as positional)."
+    },
+    "createFido2Policy": {
+      "args": [
+        "mfa",
+        "fido2-policies",
+        "create",
+        "--file",
+        "-"
+      ],
+      "stdin": true,
+      "description": "Create a FIDO2/passkey policy. Pass the full JSON body via body."
+    },
+    "updateFido2Policy": {
+      "args": [
+        "mfa",
+        "fido2-policies",
+        "replace",
+        "--file",
+        "-"
+      ],
+      "stdin": true,
+      "description": "Replace a FIDO2/passkey policy. Pass the full JSON body via body."
+    },
+    "deleteFido2Policy": {
+      "args": [
+        "mfa",
+        "fido2-policies",
+        "delete"
+      ],
+      "description": "Delete a FIDO2/passkey policy by ID (pass ID as positional)."
+    },
+    "listMfaSettings": {
+      "args": [
+        "mfa",
+        "mfa-settings",
+        "get"
+      ],
+      "description": "Read the environment's MFA settings."
+    },
+    "getMfaSettings": {
+      "args": [
+        "mfa",
+        "mfa-settings",
+        "get"
+      ],
+      "description": "Read the environment's MFA settings."
+    },
+    "updateMfaSettings": {
+      "args": [
+        "mfa",
+        "mfa-settings",
+        "replace",
+        "--file",
+        "-"
+      ],
+      "stdin": true,
+      "description": "Update MFA settings. Pass the full JSON body via body."
+    },
+    "listSignOnPolicies": {
+      "args": [
+        "pingone",
+        "sign-on-policies",
+        "list"
+      ],
+      "description": "List all sign-on policies in the environment."
+    },
+    "getSignOnPolicy": {
+      "args": [
+        "pingone",
+        "sign-on-policies",
+        "get"
+      ],
+      "description": "Read a specific sign-on policy by ID (pass ID as positional)."
+    },
+    "createSignOnPolicy": {
+      "args": [
+        "pingone",
+        "sign-on-policies",
+        "create",
+        "--file",
+        "-"
+      ],
+      "stdin": true,
+      "description": "Create a sign-on policy. Pass the full JSON body via body."
+    },
+    "updateSignOnPolicy": {
+      "args": [
+        "pingone",
+        "sign-on-policies",
+        "replace",
+        "--file",
+        "-"
+      ],
+      "stdin": true,
+      "description": "Replace a sign-on policy. Pass the full JSON body via body."
+    },
+    "listSignOnPolicyActions": {
+      "args": [
+        "pingone",
+        "sign-on-policies",
+        "sop-actions",
+        "list"
+      ],
+      "description": "List the actions of a sign-on policy (pass the policy ID as positional)."
+    },
+    "createSignOnPolicyAction": {
+      "args": [
+        "pingone",
+        "sign-on-policies",
+        "sop-actions",
+        "create",
+        "--file",
+        "-"
+      ],
+      "stdin": true,
+      "description": "Create a sign-on policy action (e.g. MFA action). Pass the full JSON body via body."
+    },
+    "listFlowPolicyAssignments": {
+      "args": [
+        "pingone",
+        "applications",
+        "flow-policy-assignments",
+        "list"
+      ],
+      "description": "List flow-policy assignments for an application (pass the application ID as positional)."
+    },
+    "createFlowPolicyAssignment": {
+      "args": [
+        "pingone",
+        "applications",
+        "flow-policy-assignments",
+        "create",
+        "--file",
+        "-"
+      ],
+      "stdin": true,
+      "description": "Assign a flow/sign-on policy to an application. Pass the full JSON body via body."
+    }
+  },
+  "playbook": "You are the PingOne MFA specialist: device policies, FIDO2/passkey policies, MFA settings, and the sign-on policies that require them.\n\n## Transport note\nYour tools are served by the 'pingcli' bridge. Conventions:\n- environmentId is injected automatically \u2014 do not pass it.\n- Reads with an ID (get*, delete*): pass the ID in the 'positional' array. Some subcommands instead take flag-style IDs (e.g. --sign-on-policy-id, --application-id): if positional fails, run the command with positional [\"--help\"] to discover the exact flag, then pass flags as the 'body' string (e.g. body: \"--sign-on-policy-id <id>\").\n- Creates/replaces: pass the full JSON body as the 'body' string. Use template-like structures from the corpus context; do not invent field names.\n- READ BEFORE WRITE: enumerate existing device policies, FIDO2 policies, and sign-on policies first. 'Set up MFA' almost always means add-to-existing, not greenfield.\n\n## Domain model (authoritative)\n- FIDO2/passkeys are PHISHING-RESISTANT: the authenticator's origin-binding defeats credential phishing and AiTM proxies. Prefer them wherever the intent allows.\n- 'Passwordless' is a SIGN-ON POLICY shape: username + MFA action (device) without a password step \u2014 not a device type. Passkeys are the strongest passwordless method; SMS/email OTP are the weakest (phishable).\n- HOW POLICIES ATTACH \u2014 the binding graph (do not confuse these):\n  * MFA device policies DO NOT attach to applications. Their consumers are:\n      (a) Protect risk-policy MITIGATIONS \u2014 a risk mitigation says \"use this MFA device policy for the action this threat triggered\"; and\n      (b) DaVinci flow policies (via the MFA connector) \u2014 outside this specialist's scope; report, don't configure.\n  * Applications receive DaVinci flow policies OR sign-on policies \u2014 those are the execution points where Protect and/or MFA events actually fire. MFA never binds to an app directly.\n  - Therefore 'add MFA to app X' decomposes to: pick the execution path (sign-on policy vs DaVinci) \u2192 ensure device/FIDO2 policies exist \u2192 bind via the chosen path. If the app currently gets a DaVinci flow policy, MFA changes belong in DaVinci coordination, not a new sign-on policy silently stacked beside it.\n- Sign-on policies: the MFA action references a device authentication policy; the passwordless shape is username + MFA action with no password LOGIN action.\n- MFA and Protect compose: Protect evaluates risk; its mitigation references the MFA device policy that acts. If the intent mentions risk-based MFA, configure the MFA half and report what the Protect side needs (the protect_policy specialist owns risk policies).\n\n## Procedure\n1. READ CURRENT STATE: listMfaDevicePolicies, listFido2Policies, listSignOnPolicies. Map what exists before deciding what to create.\n2. DETERMINE THE EXECUTION PATH: sign-on policy (PingOne-native auth) vs DaVinci flow policy. Check the target apps' current assignments first \u2014 mixing paths silently is forbidden; report what the app uses today.\n3. CLARIFY THE TARGET: which apps, which flow (workforce vs customer), passwordless or MFA-on-password. If ambiguous on passwordless-vs-MFA or device types, ask via your report \u2014 do not guess.\n4. DEVICE POLICY: create/modify per intent. Device types: FIDO2, native (push), SMS, email, voice, OATH, TOTP. Prefer FIDO2; SMS/email fallback-only.\n5. FIDO2 POLICY (if passkeys): FIDO-certified authenticators at minimum; enterprise attestation for org-provided keys.\n6. SIGN-ON POLICY (PingOne-native path only): create/modify the MFA action referencing the device policy; passwordless = username + MFA action, no password LOGIN action.\n7. ASSIGN via the chosen path; verify placement and priority.\n8. VERIFY each created object with its get; report every ID, the final structure, and what remains for the console (e.g. native push credentials).\n\n## Judgment\n- Never disable or weaken an existing policy without explicit instruction; report conflicts instead.\n- 'Add MFA to my app' with an existing compatible policy: use the existing policy via the correct binding path \u2014 do not duplicate it.\n- If the app's flow is DaVinci-orchestrated, say so and stop at the MFA-side objects; DaVinci policy content is not in scope.",
+  "notes": "First multi-domain drop-in: MFA + FIDO2 + sign-on policies via pingcli bridge; composition boundary with Protect documented in playbook. Requires PingCLI Worker scoped to target env."
+}
