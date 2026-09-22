@@ -151,6 +151,16 @@ Two directories hold them:
 | `src/login.ts` · `src/probe.ts` · `src/p1-probe.ts` | One-time login · direct specialist runner · raw connectivity probe. |
 | `p1-orchestrator-proposal.html` | The product-team writeup: problem, pattern, live-tenant evidence, asks. |
 
+## When does auth happen?
+
+Not at attach, and not at discovery. `list_specialists` reads the local
+registry only — no PingOne call, no token, so browsing the menu is free.
+The OAuth browser dance fires at the first call that must reach PingOne
+(`resolve_environment` or `dispatch_specialist`), once, and the token is
+then cached and refreshed. An attached-but-unused orchestrator never
+prompts; a directory listing leaks nothing (the one-liners are static
+declarations with nothing tenant-specific in them).
+
 ## Visibility
 
 Every specialist run emits three lenses: live MCP progress events (tool calls
