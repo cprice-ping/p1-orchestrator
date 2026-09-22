@@ -234,14 +234,15 @@
   <h2 id="pattern">The pattern</h2>
   <p>Three layers, each doing one job:</p>
   <div class="diagram"><b>Client</b> (Claude Code · IDE · any MCP client)
-  │  sees 4 one-line tools — not 78 schemas
+  │  sees 2 fixed tools — directory + dispatch, never the 78 schemas
   ▼
 <b>Orchestrator MCP Server</b>   <i>— this repo, ~500 lines</i>
-  │  routes intent → specialist, resolves auth & environmentId once
-  │  per call: fresh agent loop, own persona, own tool subset
+  │  list_specialists returns the live set from the registry;
+  │  dispatch_specialist routes intent → specialist, resolves auth &
+  │  environmentId once per call: fresh agent loop, own persona, own subset
   ▼
 <b>Specialist</b>   <i>— bounded LLM loop, playbook + tool subset</i>
-  │  e.g. app_onboarding: 10 of 78 tools, procedure in its prompt
+  │  e.g. app_onboarding: 13 of 78 tools, procedure in its prompt
   ▼
 <b>PingOne MCP Server</b>   <i>— unchanged, raw tool supply</i>
   │
@@ -251,13 +252,31 @@
     subset, playbook. The launcher computes the tool deny-list as the
     <em>complement</em> of the subset against the live catalog, so upstream
     changes to the PingOne server require no change here:</p>
-  <pre>app_onboarding (10 of 78 tools):
+  <pre>app_onboarding (13 of 78 tools):
   listApplications · getApplication · createApplication · updateApplication
   deleteApplication · listApplicationCatalog · listResources · getResource
-  listEnvironments · getEnvironment
+  createResource · updateResource · deleteResource · listEnvironments
+  getEnvironment
 
 + playbook: resolve resource → create app → grant scopes → verify
 + shared rules: secrets masked · env hoisted · confirm destructive ops</pre>
+
+  <p>The specialist set itself is <strong>one JSON file per specialist</strong>
+    — routing one-liner, tool subset, corpus topics, optional pingcli
+    fallbacks, playbook. All six live in <code>specialists/</code>, versioned
+    with the code; a specialist is added by writing a file, never by editing
+    TypeScript or recompiling:</p>
+  <pre>specialists/
+  app_onboarding.specialist.json    native MCP tools
+  audit_investigator.specialist.json  native MCP (audit tools) — no bridge
+  flow_debugger.specialist.json     native MCP tools
+  mfa_policy.specialist.json        ~23 tools, mostly pingcli bridge
+  protect_policy.specialist.json    10 tools, all pingcli bridge
+  user_lifecycle.specialist.json    native MCP tools
+
++ ~/.p1-orchestrator/specialists/  — personal overrides & playbook
+                                    experiments only; drop-in wins on
+                                    name clash, 30s TTL reload</pre>
 
   <h2 id="auth">Auth composes — nothing new to invent</h2>
   <p>The orchestrator is itself a conforming MCP client of the PingOne MCP
@@ -277,9 +296,9 @@
   <h2 id="evidence">Proven against a live tenant</h2>
   <div class="stat-row">
     <div class="stat"><div class="n">78→13</div><div class="l">tools in specialist scope</div></div>
-    <div class="stat"><div class="n">4</div><div class="l">tools the client sees</div></div>
-    <div class="stat"><div class="n">31s</div><div class="l">create-app, end to end</div></div>
-    <div class="stat"><div class="n">~6</div><div class="l">docs pinning the knowledge</div></div>
+    <div class="stat"><div class="n">2</div><div class="l">fixed tools the client sees</div></div>
+    <div class="stat"><div class="n">6</div><div class="l">specialists, one JSON each</div></div>
+    <div class="stat"><div class="n">16</div><div class="l">docs pinning the knowledge</div></div>
   </div>
   <p><strong>Worked example 1 — create.</strong> Intent: <em>"Create an OIDC
     web app named orchestrator-probe-app with scopes openid, profile, email,
@@ -311,6 +330,46 @@
       specialist can be resumed and interrogated afterward.</li>
   </ul>
 
+  <h3>The registry story: built-ins, drop-ins, one format</h3>
+  <p>The six specialists did not all start the same way — and the history is
+    the lesson. Three were born as compiled TypeScript entries in
+    <code>registry.ts</code> ("built-ins"); the next three arrived after the
+    scaling question ("can specialists scale as the P1 MCP tools expand into
+    their domains?") as JSON files dropped into a directory outside the repo
+    ("drop-ins"). Two formats, one merged list, an override rule to
+    reconcile them — construction order showing through as architecture.
+    The unification became its own proof point:</p>
+  <ul>
+    <li><strong>One format won: JSON.</strong> Nothing about a specialist
+      benefits from being code — the playbook is prose, the tool subset is a
+      string array. Adding a specialist became <em>writing one file</em>: no
+      TypeScript, no recompile, no redeploy. <code>registry.ts</code> is now
+      just the interface, the shared rules, and a two-directory loader.</li>
+    <li><strong>One set won: all six are product.</strong> Every specialist
+      here encodes transferable domain knowledge — the MFA binding graph
+      (policies bind to Protect mitigations and DaVinci flows, never to
+      applications), the Protect method choice, the auditor's
+      always-set-explicit-dates rule. That's the product's knowledge, so all
+      six live in <code>specialists/</code>, versioned with the code. A
+      clone of the repo works out of the box — no "also copy these three
+      files" step. That's the difference between shipping a reference and
+      shipping a demo.</li>
+    <li><strong>The local directory stayed, with a precise job:</strong>
+      personal overrides and playbook experiments only (drop-in wins on
+      name clash, 30s TTL reload). Try a playbook edit there before
+      committing it; park a tenant-specific specialist you wouldn't ship.</li>
+    <li><strong>Dynamic exposure was verified in both directions</strong>
+      before unification: a file dropped in appears in the directory on the
+      next listing with no server restart and no client reconnect; deleting
+      the file retracts it the same way. Retraction is the property a
+      compiled built-in list can't offer.</li>
+  </ul>
+  <p>The fixed two-tool client surface makes the dynamic set safe to expose:
+    adding a specialist never renegotiates the client connection — it
+    surfaces in the <code>list_specialists</code> directory's
+    <em>output</em>, never in the tool listing. Fixed contract, dynamic
+    content.</p>
+
   <h2 id="corpus">The knowledge story: where does a specialist learn "the What"?</h2>
   <p>Tool descriptions say what each tool does; they cannot say how tools
     chain or which constructs combine. Ping's docs hold those answers — and
@@ -328,7 +387,7 @@
   │
   │  1. ROUTE   intent → specialist
   │  2. GATHER  situational knowledge:
-  │       tier 1 — curated pins  <i>(~6 hand-picked pages; the authority floor)</i>
+  │       tier 1 — curated pins  <i>(16 hand-picked pages; the authority floor)</i>
   │       tier 2 — P1 Docs MCP   <i>(docs.pingidentity.com/mcp — agent-fronted
   │                 semantic retrieval over the live corpus, docset-filtered;
                   zero local doc URLs, new pages discoverable on publish)</i>
@@ -341,6 +400,39 @@
     knowledge lives, the context carries what's true for this task, the
     playbook owns what to do, and PingOne stays the enforcement
     authority.</strong> None of it is duplicated.</p>
+
+  <h3>The auditor: the newest specialist, the clearest lesson</h3>
+  <p>The sixth specialist was born the way the pattern predicts — a gap
+    noticed mid-task. "What did we get up to in this environment over the
+    last two days?" had no specialist to route to, so one was written
+    <em>as a JSON file</em> and dispatched <em>to answer the question that
+    prompted it</em>, the same hour. Three findings from that run carry the
+    story:</p>
+  <ul>
+    <li><strong>The supply was already there.</strong> The P1 MCP catalog
+      already ships <code>searchAuditActivities</code> +
+      <code>getAuditActivity</code> — so the auditor is the first
+      specialist with <em>zero</em> pingcli fallback: pure native supply,
+      and the first domain where the bridge has retired itself entirely.
+      What was missing was only the procedure that knows to reach for
+      them.</li>
+    <li><strong>The playbook beat the hand-written query.</strong> The
+      direct API call the same question prompted first used
+      <code>since=</code> — which PingOne silently narrowed to ~24h (55
+      events). The specialist, following its own always-set-explicit-dates
+      rule, swept the true two-day window (73 events) and caught a Sep 21
+      user-lifecycle chapter the direct call missed entirely. The MCP
+      tool's own description warns about exactly this; a playbook turns a
+      warning into a behavior.</li>
+    <li><strong>The trail also validated the attribution story.</strong>
+      Every specialist action appeared under the admin person identity
+      <em>via</em> <code>pingone-mcp-server</code>; the console checks
+      appeared via <code>adminui</code>; the bridge calls carry the PingCLI
+      worker. Two channels, clean separation, already in the audit trail —
+      and the auditor itself explained the one scary-looking cluster (13
+      secret reads in 3 seconds) as the MFA specialist's batched
+      application-detail fetches, cross-checked against run logs.</li>
+  </ul>
 
   <h3>The worked proof: one intent, three iterations, one architecture</h3>
   <table>
@@ -370,7 +462,7 @@
     write.</p>
 
   <h3>The corpus is a workaround for a missing P1 artifact</h3>
-  <p>Everything above runs on a hand-curated map of <strong>~6 pinned
+  <p>Everything above runs on a hand-curated map of <strong>16 pinned
     pages</strong> plus semantic retrieval — and that is the strongest form
     of the ask: <em>Ping ships the corpus and the index; the one binding
     agents need is which pages decide which task.</em> Two publishable
@@ -404,12 +496,14 @@
     earn their complexity:</p>
   <ol>
     <li><strong>Dynamic specialist exposure (shipped).</strong> The
-      orchestrator's tool list is derived from the registry on every
-      listing — specialists are <em>data</em>, addable as
-      <code>*.specialist.json</code> drop-ins with no redeploy, and
-      retraction works the same way. The registry's curation stays
-      hand-authored on purpose: a playbook is procedure, and procedure is
-      the human contribution.</li>
+      client sees two fixed tools; specialists are <em>data</em> — one
+      <code>*.specialist.json</code> per specialist, loaded from
+      <code>specialists/</code> (product set, versioned) plus a local
+      overrides directory on a 30s TTL. Adding or retracting a specialist
+      is a file operation, with no redeploy, no server restart, and no
+      client renegotiation — verified live in both directions. The
+      registry's curation stays hand-authored on purpose: a playbook is
+      procedure, and procedure is the human contribution.</li>
     <li><strong>Capability-based dispatch (designed, not yet needed).</strong>
       When specialist count grows past what any client should list, the
       client-facing contract shifts from one-tool-per-specialist to a
@@ -429,7 +523,7 @@
 
   <h2 id="why">Why this wins on context and cost</h2>
   <ul>
-    <li><strong>Client context.</strong> The orchestrating agent holds 4 tool
+    <li><strong>Client context.</strong> The orchestrating agent holds 2 tool
       one-liners instead of 78 full schemas — and the playbooks never enter
       the client's context at all.</li>
     <li><strong>Specialist context is bounded and disposable.</strong> Each
@@ -508,7 +602,7 @@
       <ul>
         <li><strong>A topic map</strong> (task/tool → the 1–3 authoritative
           doc pages that decide it). We maintain a local workaround today
-          (<code>corpus.ts</code>): ~6 curated pins, live-fetched as
+          (<code>corpus.ts</code>): 16 curated pins, live-fetched as
           <code>.md</code> alternates at call time, freshness-checked by
           <code>npm run pin-check</code>. It works — but it's hand-curation
           that duplicates what Ping could publish natively, and specialists
@@ -557,7 +651,8 @@
 
   <footer>
     Reference implementation at <code>Documents/GitHub/Headless</code> —
-    specialist registry, launcher, orchestrator server, corpus layer, probes,
+    six specialists as one JSON file each (<code>specialists/</code>),
+    the registry/launcher, orchestrator server, corpus layer, probes,
     and run logs from the live-tenant validation in this document. Demo
     artifacts remain in the tenant: <code>orchestrator-probe-app</code>
     (web app pattern), <code>orchestrator-test-te</code> (worker pattern),
