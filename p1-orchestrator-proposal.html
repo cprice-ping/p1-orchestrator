@@ -276,10 +276,10 @@
 
   <h2 id="evidence">Proven against a live tenant</h2>
   <div class="stat-row">
-    <div class="stat"><div class="n">78→10</div><div class="l">tools in specialist scope</div></div>
+    <div class="stat"><div class="n">78→13</div><div class="l">tools in specialist scope</div></div>
     <div class="stat"><div class="n">4</div><div class="l">tools the client sees</div></div>
     <div class="stat"><div class="n">31s</div><div class="l">create-app, end to end</div></div>
-    <div class="stat"><div class="n">6</div><div class="l">MCP calls per task</div></div>
+    <div class="stat"><div class="n">~6</div><div class="l">docs pinning the knowledge</div></div>
   </div>
   <p><strong>Worked example 1 — create.</strong> Intent: <em>"Create an OIDC
     web app named orchestrator-probe-app with scopes openid, profile, email,
@@ -310,6 +310,85 @@
     <li><strong>Interactive</strong> — each run returns a session id; the
       specialist can be resumed and interrogated afterward.</li>
   </ul>
+
+  <h2 id="corpus">The knowledge story: where does a specialist learn "the What"?</h2>
+  <p>Tool descriptions say what each tool does; they cannot say how tools
+    chain or which constructs combine. Ping's docs hold those answers — and
+    Ping is already <strong>agent-ready</strong> (llms.txt indexes, token-efficient
+    .md alternates, a docs-for-agents guide) — but no artifact binds docs to
+    actions. We hit this concretely: the task "create a token-exchange app
+    with a custom audience" produced a Worker app, and the platform rejected
+    it (<code>CONSTRAINT_VIOLATION</code>). The constraint — <em>worker apps
+    can only hold grants on the openid resource; custom audiences ride on
+    Resource scopes for non-worker apps</em> — lives in the platform's
+    behavior, partially in the docs, fully in neither the tool descriptions
+    nor the API reference. Our first version learned it from a 400. The fix
+    became an architecture:</p>
+  <div class="diagram"><b>Orchestrator at dispatch</b>   <i>— it is a retrieval layer, not just a router</i>
+  │
+  │  1. ROUTE   intent → specialist
+  │  2. GATHER  situational knowledge:
+  │       tier 1 — curated pins  <i>(~6 hand-picked pages; the authority floor)</i>
+  │       tier 2 — P1 Docs MCP   <i>(docs.pingidentity.com/mcp — agent-fronted
+  │                 semantic retrieval over the live corpus, docset-filtered;
+                  zero local doc URLs, new pages discoverable on publish)</i>
+  │  3. DISTILL bounded decision-relevant excerpts (sourced, dated)
+  ▼
+<b>Specialist</b> receives: intent + environmentId + SITUATIONAL CONTEXT
+  │   playbook owns procedure · context owns the facts of this task
+  │   ground truth remains the tool catalog + PingOne enforcement</div>
+  <p>The division of labor is the point: <strong>the orchestrator knows where
+    knowledge lives, the context carries what's true for this task, the
+    playbook owns what to do, and PingOne stays the enforcement
+    authority.</strong> None of it is duplicated.</p>
+
+  <h3>The worked proof: one intent, three iterations, one architecture</h3>
+  <table>
+    <tr><th></th><th>Run 1 (no knowledge layer)</th><th>Run 3 (corpus at dispatch)</th></tr>
+    <tr><td><strong>App type built</strong></td>
+      <td>Worker (from defaults) → custom grant <strong>rejected 400</strong></td>
+      <td>Confidential OIDC web app — the specialist cited the doc contrast</td></tr>
+    <tr><td><strong>Custom-resource grant</strong></td>
+      <td>Rejected; task dead-ended</td>
+      <td>Created first try, verified</td></tr>
+    <tr><td><strong>Who knew the constraint</strong></td>
+      <td>Runtime 400 taught it once, then forgotten</td>
+      <td>Orchestrator delivered it <em>before</em> the first call</td></tr>
+    <tr><td><strong>Outcome</strong></td>
+      <td>App unusable for its purpose</td>
+      <td>Working token-exchange client, correct on the pass that counted</td></tr>
+  </table>
+  <p>The same A/B also surfaced the honest edge: on one run the specialist
+    still reasoned worker-first (the docs don't mandate an app type), hit
+    the constraint, <strong>dry-run-deleted its own stub, recreated
+    correctly, and reported the doc-vs-API conflict explicitly</strong> —
+    "reported, not forced." Self-recovery is good; it also demonstrates why
+    the learnings loop matters: the specialist cannot remember across runs,
+    only the corpus can. A single learned pin ("workers can't hold
+    custom-resource grants") converts that recovery story into a first-pass
+    story — that is the highest-value next artifact, and it is ours to
+    write.</p>
+
+  <h3>The corpus is a workaround for a missing P1 artifact</h3>
+  <p>Everything above runs on a hand-curated map of <strong>~6 pinned
+    pages</strong> plus semantic retrieval — and that is the strongest form
+    of the ask: <em>Ping ships the corpus and the index; the one binding
+    agents need is which pages decide which task.</em> Two publishable
+    shapes, both with working consumers in this repo:</p>
+  <ul>
+    <li><strong>A topic map</strong> — task/tool → the 1–3 authoritative
+      pages, publishable next to the llms.txt indexes. Our local map
+      (<code>corpus.ts</code>) is the client; <code>npm run pin-check</code>
+      is the freshness contract.</li>
+    <li><strong>Per-tool doc bindings</strong> — a <code>docs</code> field
+      in the MCP catalog itself (<code>createApplication</code> →
+      applications-1.md + token-exchange-grant-type.md). One line per tool;
+      the binding arrives with the schema and needs no separate artifact.</li>
+  </ul>
+  <p>And the docs server under development closes the loop from the other
+    side: with agent-fronted retrieval live, this repo's local curation
+    <em>demotes</em> to pins-and-learnings the moment the service
+    productizes — the consumption code already speaks to it.</p>
 
   <h2 id="scaling">How the intent layer scales as the catalog grows</h2>
   <p>The catalog is growing: ~78 platform tools today, and a plausible
@@ -429,13 +508,11 @@
       <ul>
         <li><strong>A topic map</strong> (task/tool → the 1–3 authoritative
           doc pages that decide it). We maintain a local workaround today
-          (<code>corpus.ts</code>): ~6 curated pins, live-fetched from
-          Ping's agent-ready <code>.md</code> alternates at call time, with
-          a freshness checker (<code>npm run pin-check</code>) against the
-          <code>llms.txt</code> index and dynamic index-match fallback. It
-          works — but it's hand-curation that duplicates what Ping could
-          publish natively, and specialists shouldn't need to re-derive
-          which pages decide.</li>
+          (<code>corpus.ts</code>): ~6 curated pins, live-fetched as
+          <code>.md</code> alternates at call time, freshness-checked by
+          <code>npm run pin-check</code>. It works — but it's hand-curation
+          that duplicates what Ping could publish natively, and specialists
+          shouldn't need to re-derive which pages decide.</li>
         <li><strong>Per-tool doc bindings</strong> in the MCP catalog — a
           <code>docs</code> field on each tool description
           (<code>createApplication</code> → applications-1.md +
@@ -443,10 +520,13 @@
           inside the catalog itself.</li>
       </ul>
       <p>The docs corpus itself is already excellent and agent-ready
-        (llms.txt, .md alternates, docs-for-agents guide) — the missing
-        binding is which pages matter for which action. Our consumption
-        code is a working client for exactly that artifact; hand it over
-        and we swap the source.</p>
+        (llms.txt, .md alternates, docs-for-agents guide) — and the docs
+        MCP service now under development is the retrieval tier our
+        orchestrator already calls. The missing binding is which pages
+        matter for which action: hand that over, and the local pins
+        demote to overrides while the learnings tier (runtime-discovered
+        constraints the docs lack — see the worked proof above) becomes
+        the feedback channel into your corpus.</p>
     </li>
     <li><strong>A composite-tool escape hatch.</strong> Where a flow turns
       out fully deterministic (this app-creation sequence is close), a single
@@ -468,13 +548,21 @@
       feature (curation is the point), not a bug.</li>
     <li><strong>Latency.</strong> 20–31s per specialist run is fine for admin
       workflows, wrong for interactive chat loops.</li>
+    <li><strong>Model non-determinism is real.</strong> The same context can
+      be weighed differently across runs (one A/B still reasoned worker-first
+      and self-recovered). Curation reduces the surface for this; it cannot
+      eliminate it — which is why destructive-op enforcement belongs in
+      infrastructure, not in prompts.</li>
   </ul>
 
   <footer>
     Reference implementation at <code>Documents/GitHub/Headless</code> —
-    specialist registry, launcher, orchestrator server, probes, and run logs
-    from the live-tenant validation in this document. Two worked examples
-    remain in the tenant (<code>orchestrator-probe-app</code>) for
-    demonstration.
+    specialist registry, launcher, orchestrator server, corpus layer, probes,
+    and run logs from the live-tenant validation in this document. Demo
+    artifacts remain in the tenant: <code>orchestrator-probe-app</code>
+    (web app pattern), <code>orchestrator-test-te</code> (worker pattern),
+    the <code>orchestrator-test</code> resource + <code>orchestrator</code>
+    scope, and <code>orchestrator-exchange-app-v3</code> (token-exchange
+    with a custom audience — the worked proof above).
   </footer>
 </div>
