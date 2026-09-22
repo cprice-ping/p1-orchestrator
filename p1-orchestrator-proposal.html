@@ -400,6 +400,17 @@
     knowledge lives, the context carries what's true for this task, the
     playbook owns what to do, and PingOne stays the enforcement
     authority.</strong> None of it is duplicated.</p>
+  <p>The dispatch itself is the orchestrator's whole job, stated once:
+    <strong>route, then equip.</strong> Pick the specialist from the
+    directory, then assemble everything it needs for <em>this</em> task
+    before it wakes up — identity (the caller's OAuth token, inherited,
+    never held), environment (resolved per dispatch), capability (the tool
+    subset, resolved against the live catalog), procedure (the authored
+    playbook), and facts (the distilled doc context). A specialist never
+    goes looking; it starts pre-armed. The specialist JSON is the authoring
+    checklist that matches — <code>tools</code> declares what it can do,
+    <code>playbook</code> how, <code>topics</code> what it needs to know
+    about: the equipping contract the orchestrator fills at dispatch.</p>
 
   <h3>The auditor: the newest specialist, the clearest lesson</h3>
   <p>The sixth specialist was born the way the pattern predicts — a gap
