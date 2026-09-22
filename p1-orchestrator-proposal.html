@@ -311,6 +311,43 @@
       specialist can be resumed and interrogated afterward.</li>
   </ul>
 
+  <h2 id="scaling">How the intent layer scales as the catalog grows</h2>
+  <p>The catalog is growing: ~78 platform tools today, and a plausible
+    all-services landing (adding Protect, MFA, Credentials, Verify,
+    Authorize, SSO policy) puts it well past 140. At that scale the intent
+    layer stops being an optimization and becomes structurally necessary —
+    a flat 140-tool catalog exceeds any client's routing ability, and some
+    services (Protect is the worked example: AuthN vs Registration need
+    different predictors; legacy RiskLevels+Overrides vs preferred
+    Mitigations/Targeted Policies need a method decision
+    <em>before</em> any tool call) require task clarification a flat
+    catalog cannot express. Three scaling mechanisms, in the order they
+    earn their complexity:</p>
+  <ol>
+    <li><strong>Dynamic specialist exposure (shipped).</strong> The
+      orchestrator's tool list is derived from the registry on every
+      listing — specialists are <em>data</em>, addable as
+      <code>*.specialist.json</code> drop-ins with no redeploy, and
+      retraction works the same way. The registry's curation stays
+      hand-authored on purpose: a playbook is procedure, and procedure is
+      the human contribution.</li>
+    <li><strong>Capability-based dispatch (designed, not yet needed).</strong>
+      When specialist count grows past what any client should list, the
+      client-facing contract shifts from one-tool-per-specialist to a
+      stable <code>capabilities()</code> surface ("app+resource lifecycle",
+      "directory", "flow debugging", …) with intent resolution moving
+      behind it. The client's context load then scales with <em>task
+      domains</em>, not tool count — the same law that pushes the raw
+      catalog toward tool-search one layer down.</li>
+    <li><strong>Derived specialists (the end state)</strong>: when P1
+      publishes the catalog metadata this proposal asks for (tool
+      groupings, doc bindings, elicitation hints), specialists become
+      <em>assembled</em> — subset from the domain's tool group, context
+      from the doc binding, clarification from the hints — with the
+      hand-written playbooks remaining as the seed corpus. The authored
+      registry here is the stepping stone, not the end state.</li>
+  </ol>
+
   <h2 id="why">Why this wins on context and cost</h2>
   <ul>
     <li><strong>Client context.</strong> The orchestrating agent holds 4 tool

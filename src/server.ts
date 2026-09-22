@@ -18,7 +18,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { launchSpecialist, fetchToolCatalog } from "./launch.js";
 import type { SpecialistEvent } from "./launch.js";
-import { SPECIALISTS, getSpecialist } from "./registry.js";
+import { getSpecialist, listAll } from "./registry.js";
 import { resolveToken } from "./auth.js";
 import { envIdFromMcpUrl } from "./launch.js";
 
@@ -27,11 +27,15 @@ const server = new Server(
   { capabilities: { tools: {} } },
 );
 
-// One-line schemas; Zod→JSON schema handled by the SDK below.
+// Dynamic exposure: the tool listing is DERIVED from the registry on every
+// listTools call — built-ins plus any *.specialist.json dropped into
+// ~/.p1-orchestrator/specialists/. Adding a specialist is a data drop;
+// clients pick it up on their next tools/list without a server redeploy.
 server.setRequestHandler(ListToolsRequestSchema, async () => {
+  const all = await listAll();
   return {
     tools: [
-      ...SPECIALISTS.map((s) => ({
+      ...all.map((s) => ({
         name: s.name,
         description: s.description,
         inputSchema: {
@@ -65,11 +69,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
 
   if (name === "list_specialists") {
+    const all = await listAll();
     return {
       content: [
         {
           type: "text",
-          text: SPECIALISTS.map(
+          text: all.map(
             (s) => `- ${s.name}: ${s.description}`,
           ).join("\n"),
         },
@@ -198,4 +203,5 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
-console.error("p1-orchestrator ready (specialists:", SPECIALISTS.length + ")");
+const loaded = await listAll();
+console.error("p1-orchestrator ready (specialists:", loaded.length + ")");

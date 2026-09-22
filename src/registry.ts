@@ -209,4 +209,51 @@ export function getSpecialist(name: string): SpecialistDef | undefined {
   return SPECIALISTS.find((s) => s.name === name);
 }
 
+// ---------------------------------------------------------------------------
+// Dynamic registry: built-ins + any *.specialist.json files dropped in
+// `~/.p1-orchestrator/specialists/`. A file outside the compiled bundle
+// means adding a specialist is a data drop, not a redeploy. Reloaded per
+// MCP listTools call (cheap; a few entries), so runtime additions appear
+// on the next tool listing without a server restart.
+// ---------------------------------------------------------------------------
+
+import { readdir, readFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
+
+const EXTRA_DIR = join(homedir(), ".p1-orchestrator", "specialists");
+let extraCache: { at: number; defs: SpecialistDef[] } | null = null;
+const EXTRA_TTL_MS = 30_000;
+
+async function loadExtra(): Promise<SpecialistDef[]> {
+  if (extraCache && Date.now() - extraCache.at < EXTRA_TTL_MS) return extraCache.defs;
+  const defs: SpecialistDef[] = [];
+  try {
+    const files = (await readdir(EXTRA_DIR)).filter((f) => f.endsWith(".specialist.json"));
+    for (const f of files) {
+      try {
+        const raw = JSON.parse(await readFile(join(EXTRA_DIR, f), "utf8")) as SpecialistDef;
+        if (!raw.name || !raw.description || !raw.tools?.length || !raw.playbook) {
+          console.error(`[registry] ${f}: missing name/description/tools/playbook — skipped`);
+          continue;
+        }
+        defs.push(raw);
+      } catch (err) {
+        console.error(`[registry] failed to load ${f}:`, err instanceof Error ? err.message : err);
+      }
+    }
+  } catch {
+    /* dir absent: built-ins only */
+  }
+  extraCache = { at: Date.now(), defs };
+  return defs;
+}
+
+/** All specialists: built-ins + dynamically dropped (extra overrides same-name builtin). */
+export async function listAll(): Promise<SpecialistDef[]> {
+  const extra = await loadExtra();
+  const extraNames = new Set(extra.map((s) => s.name));
+  return [...SPECIALISTS.filter((s) => !extraNames.has(s.name)), ...extra];
+}
+
 export const MCP_SERVER_NAME = "pingone";
