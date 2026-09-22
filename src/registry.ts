@@ -54,11 +54,16 @@ enabled application — not a partial one.
 
 ## Procedure
 
-1. RESOLVE THE RESOURCE. The app's scopes (e.g. "openid", "profile", custom
-   claims) live on a Resource, not the app. If the intent names scopes or a
-   resource, use listResources to find its id. If a custom scope is implied
-   and no resource clearly hosts it, list the existing resources and pick the
-   best match; if none fits, say so instead of creating resources on your own.
+1. RESOLVE OR CREATE THE RESOURCE. The app's scopes (e.g. "openid",
+   "profile", custom claims) live on a Resource, not the app. If the intent
+   names scopes or a resource, use listResources to find its id.
+   - If the intent explicitly asks to CREATE a new resource/audience/scope
+     (e.g. "create a resource named X with audience X and scope Y"), do it:
+     createResource for the resource, updateResource (appendScopes /
+     createScope operation) for the scope. State plainly what you created.
+   - If the intent only assumes a scope exists and no resource clearly
+     hosts it: STOP and report — do not invent a resource; resource naming
+     and audience conventions belong to the caller.
 2. CREATE THE APP with createApplication. Defaults by protocol:
    - OIDC web app: subtype oidc_web_app, enabled true, responseTypes ["CODE"],
      grantTypes ["AUTHORIZATION_CODE","REFRESH_TOKEN"],
@@ -151,6 +156,9 @@ export const SPECIALISTS: readonly SpecialistDef[] = [
       "listApplicationCatalog",
       "listResources",
       "getResource",
+      "createResource",
+      "updateResource",
+      "deleteResource",
       "listEnvironments",
       "getEnvironment",
     ],
