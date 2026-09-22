@@ -18,7 +18,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { launchSpecialist, fetchToolCatalog } from "./launch.js";
 import type { SpecialistEvent } from "./launch.js";
-import { getSpecialist, listAll } from "./registry.js";
+import { listAll } from "./registry.js";
 import { resolveToken } from "./auth.js";
 import { envIdFromMcpUrl } from "./launch.js";
 
@@ -27,20 +27,32 @@ const server = new Server(
   { capabilities: { tools: {} } },
 );
 
-// Dynamic exposure: the tool listing is DERIVED from the registry on every
-// listTools call — built-ins plus any *.specialist.json dropped into
-// ~/.p1-orchestrator/specialists/. Adding a specialist is a data drop;
-// clients pick it up on their next tools/list without a server redeploy.
+// FIXED-SURFACE exposure: the client sees exactly two tools, forever.
+// Specialists are discovered via the directory (list_specialists) and
+// invoked via dispatch_specialist — so adding a specialist is a data drop
+// that surfaces in the directory's OUTPUT, never in the tool listing.
+// No client renegotiation, ever: fixed contract, dynamic content.
 server.setRequestHandler(ListToolsRequestSchema, async () => {
-  const all = await listAll();
   return {
     tools: [
-      ...all.map((s) => ({
-        name: s.name,
-        description: s.description,
+      {
+        name: "list_specialists",
+        description:
+          "List available PingOne specialists with their exact scopes of competence. Call this first when the task could be handled by a specialist, then dispatch_specialist with the chosen name.",
+        inputSchema: { type: "object" as const, properties: {} },
+      },
+      {
+        name: "dispatch_specialist",
+        description:
+          "Invoke a PingOne specialist by name to complete a task. Route with list_specialists first; pass the specialist's name and a precise intent. Use sessionId to continue a previous conversation with the same specialist.",
         inputSchema: {
           type: "object" as const,
           properties: {
+            specialist: {
+              type: "string",
+              description:
+                "The specialist name from list_specialists (e.g. app_onboarding).",
+            },
             intent: {
               type: "string",
               description:
@@ -49,17 +61,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             sessionId: {
               type: "string",
               description:
-                "Optional: a session_id returned by a previous call to this same tool, to continue that conversation instead of starting fresh.",
+                "Optional: a session_id returned by a previous dispatch of the same specialist, to continue that conversation instead of starting fresh.",
             },
           },
-          required: ["intent"],
+          required: ["specialist", "intent"],
         },
-      })),
-      {
-        name: "list_specialists",
-        description:
-          "List available PingOne specialists with their exact scopes of competence.",
-        inputSchema: { type: "object" as const, properties: {} },
       },
     ],
   };
@@ -74,18 +80,37 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       content: [
         {
           type: "text",
-          text: all.map(
-            (s) => `- ${s.name}: ${s.description}`,
-          ).join("\n"),
+          text: [
+            "Available PingOne specialists — pick by task, dispatch with dispatch_specialist:",
+            "",
+            ...all.map((s) => `- ${s.name}: ${s.description}`),
+            "",
+            "If no specialist covers the task, say so rather than guessing; name the closest match and what's missing.",
+          ].join("\n"),
         },
       ],
     };
   }
 
-  const def = getSpecialist(name);
-  if (!def) {
+  // dispatch_specialist: resolve the specialist from the DYNAMIC registry.
+  const specialistName =
+    typeof args?.specialist === "string" ? args.specialist.trim() : "";
+  if (!specialistName) {
     return {
-      content: [{ type: "text", text: `Unknown specialist: ${name}` }],
+      content: [{ type: "text", text: "Missing required arg: specialist" }],
+      isError: true,
+    };
+  }
+  const def = (await listAll()).find((s) => s.name === specialistName);
+  if (!def) {
+    const all = await listAll();
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Unknown specialist '${specialistName}'. Available: ${all.map((s) => s.name).join(", ")}. Call list_specialists for descriptions.`,
+        },
+      ],
       isError: true,
     };
   }
