@@ -32,7 +32,8 @@ export type Topic =
   | "fido2-passkeys"
   | "passwordless"
   | "protect-policy-sets"
-  | "protect-predictors";
+  | "protect-predictors"
+  | "audit-activities";
 
 export const DOC_MAP: Partial<Record<Topic, DocDoc[]>> = {
   "token-exchange": [
@@ -143,6 +144,14 @@ export const DOC_MAP: Partial<Record<Topic, DocDoc[]>> = {
         "composite predictor pattern: conditions across other predictors assigning risk levels",
     },
   ],
+  "audit-activities": [
+    {
+      title: "Audit Activities",
+      url: "https://developer.pingidentity.com/pingone-api/platform/audit-activities.md",
+      decides:
+        "the audit trail API: SCIM filters (recordedAt range, actors.user.id, actors.client.id, action.type, resources.id/type, correlationid), the adminIdentityEvent tag, and the activity JSON shape (actors{client,user}, action.type, resources[], result.status)",
+    },
+  ],
 };
 
 export interface DocDoc {
@@ -162,6 +171,7 @@ export const TOPIC_KEYWORDS: Partial<Record<Topic, string[]>> = {
   passwordless: ["passwordless", "no password", "without password"],
   "protect-policy-sets": ["risk policy", "policy set", "mitigations", "targeted policy"],
   "protect-predictors": ["predictor", "risk level", "velocity", "bot detection", "anonymous network"],
+  "audit-activities": ["audit", "activity", "activities", "who did", "what changed", "trail", "compliance", "history", "changed"],
 };
 
 export interface CorpusDoc {
