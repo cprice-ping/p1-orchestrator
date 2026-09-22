@@ -124,19 +124,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 
   const accessToken = process.env.P1_ACCESS_TOKEN;
-  // Task target env: explicit config first (the sandbox specialists act on),
-  // else parsed from the MCP URL (the admin/auth home env).
+  // Task-target env: explicit config first, else parsed from the MCP URL.
   const envId =
-    process.env.P1_ENVIRONMENT_ID ??
-    envIdFromMcpUrl(
-      process.env.P1_MCP_URL ?? "https://mcp.pingone.com/admin/2087f9ab-c416-45c4-92f1-22bbc894407c/mcp",
-    );
+    process.env.P1_ENVIRONMENT_ID ?? envIdFromMcpUrl(process.env.P1_MCP_URL ?? "");
   if (!envId) {
     return {
       content: [
         {
           type: "text",
-          text: "Cannot resolve environment ID from P1_MCP_URL; set P1_MCP_URL with an /admin/<uuid>/mcp URL or set P1_ENVIRONMENT_ID.",
+          text: "Cannot resolve the task environment. Set P1_ENVIRONMENT_ID=<env-uuid> and/or P1_MCP_URL=https://mcp.pingone.com/admin/<admin-env-uuid>/mcp (the URL your PingOne MCP server config uses).",
         },
       ],
       isError: true,
@@ -145,12 +141,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
   try {
     // Token: env override → cache → refresh → one-time browser flow.
+    // Login env: the MCP URL's admin env if configured, else the task env.
     const auth = accessToken
       ? { token: accessToken, via: "env" as const }
       : await resolveToken(
-          envIdFromMcpUrl(
-            process.env.P1_MCP_URL ?? "https://mcp.pingone.com/admin/2087f9ab-c416-45c4-92f1-22bbc894407c/mcp",
-          ) ?? "",
+          envIdFromMcpUrl(process.env.P1_MCP_URL ?? "") ?? envId,
           process.env.P1_MCP_URL ?? "",
         );
 

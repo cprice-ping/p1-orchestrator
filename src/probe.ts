@@ -6,7 +6,7 @@
  * Args: <specialist-name> <intent...>
  */
 
-import { launchSpecialist, DEFAULT_P1_MCP_URL } from "./launch.js";
+import { launchSpecialist } from "./launch.js";
 import { listAll } from "./registry.js";
 
 const [name, ...rest] = process.argv.slice(2);
@@ -28,10 +28,13 @@ if (!def) {
   process.exit(1);
 }
 
-const url = process.env.P1_MCP_URL ?? DEFAULT_P1_MCP_URL;
-const envId = process.env.P1_ENVIRONMENT_ID ?? "3f720e3e-ceb4-43a7-bb45-45b05eb26280"; // Agentic AI sandbox default
-if (!envId) {
-  console.error("Set P1_ENVIRONMENT_ID (or P1_MCP_URL) first.");
+const url = process.env.P1_MCP_URL;
+const envId = process.env.P1_ENVIRONMENT_ID;
+if (!url || !envId) {
+  console.error(
+    "Set P1_ENVIRONMENT_ID (task-target env UUID) and P1_MCP_URL\n" +
+      "(https://mcp.pingone.com/admin/<admin-env-uuid>/mcp) first.",
+  );
   process.exit(1);
 }
 

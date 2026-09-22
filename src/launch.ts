@@ -130,8 +130,8 @@ export function computeDenyList(
     .map((t) => `mcp__${MCP_SERVER_NAME}__${t}`);
 }
 
-export const DEFAULT_P1_MCP_URL =
-  "https://mcp.pingone.com/admin/2087f9ab-c416-45c4-92f1-22bbc894407c/mcp";
+/** Default MCP URL shape — the admin env must be supplied (P1_MCP_URL). */
+export const DEFAULT_P1_MCP_URL = "";
 
 /** Extract the admin env UUID from an mcp.pingone.com URL. */
 export function envIdFromMcpUrl(url: string): string | undefined {

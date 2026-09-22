@@ -10,14 +10,14 @@ cross-service flows (scopes live on Resources, granted to Applications via a
 second call) are tribal knowledge each consumer rediscovers.
 
 This repo inverts the ratio. It is a small **orchestrator MCP server** that
-exposes ~4 tools. Each is a *specialist* — a bounded agent loop holding a
-curated subset of the raw tools plus a **playbook**: the procedure, written
-down. "Onboard an OIDC application" becomes one intent, not six raw calls
-and guesswork.
+exposes two fixed tools. One is a *directory*; the other dispatches a
+*specialist* — a bounded agent loop holding a curated subset of the raw tools
+plus a **playbook**: the procedure, written down. "Onboard an OIDC
+application" becomes one intent, not six raw calls and guesswork.
 
 ```
 Claude Code (or any MCP client)
-    │  sees 4 one-liners — not 78 schemas
+    │  sees 2 fixed tools — directory + dispatch, never 78 schemas
     ▼
 p1-orchestrator  (this repo: one local MCP server)
     │  per call: spawn loop → playbook + tool subset → compact report
@@ -33,7 +33,25 @@ product/deployment decision, not a pattern requirement. The graduation path
 (per-user tokens against a configured login env, ingress auth, a destructive-op
 deny-gate) is sketched in `p1-orchestrator-proposal.html`.
 
+## Prerequisites
+
+- **A PingOne environment where the PingOne MCP Server is enabled** (that
+  enablement also pre-registers the `pingone-mcp-server` OAuth client the
+  orchestrator authenticates through — nothing to create). An admin person
+  in that environment signs in once, in the browser, during setup.
+- **Node 22+** and npm.
+- *(Optional)* `pingcli` — only needed for the pingcli-bridge fallback:
+  specialists whose domains the P1 MCP catalog doesn't carry yet (Protect,
+  MFA today) fall back to `pingcli` commands with a profile holding a
+  Worker role assignment. Catalog-backed specialists (apps, users, audit,
+  DaVinci) need nothing beyond the MCP server itself.
+
 ## Quick start
+
+Two environment UUIDs from your tenant: the **admin environment** (where the
+MCP server URL lives — the `<admin-env-uuid>` in
+`https://mcp.pingone.com/admin/<admin-env-uuid>/mcp`) and, if different, the
+**task environment** the specialists should act on (`P1_ENVIRONMENT_ID`).
 
 ```bash
 npm install
@@ -41,24 +59,28 @@ npm install
 # 1. One-time browser login (pre-wired pingone-mcp-server client,
 #    OIDC code + PKCE — the same auth the P1 MCP Server performs).
 #    Token is cached at ~/.p1-orchestrator/tokens.json and refreshed.
-npm run login
+P1_ENVIRONMENT_ID=<admin-env-uuid> npm run login
 
 # 2. Drive one specialist directly (no MCP layer) — the fast dev loop:
-P1_ENVIRONMENT_ID=<target-env-uuid> \
+P1_MCP_URL=https://mcp.pingone.com/admin/<admin-env-uuid>/mcp \
+P1_ENVIRONMENT_ID=<task-env-uuid> \
 npm run probe -- app_onboarding \
   "Create an OIDC web app named demo-app with scopes openid profile email,
    PKCE enforced, redirect http://localhost:3000/callback, enabled"
 
 # 3. Attach the orchestrator to Claude Code:
 npm run build
+P1_MCP_URL=https://mcp.pingone.com/admin/<admin-env-uuid>/mcp \
+P1_ENVIRONMENT_ID=<task-env-uuid> \
 claude mcp add p1-orchestrator \
-  --env P1_ENVIRONMENT_ID=<target-env-uuid> \
+  --env P1_MCP_URL=... --env P1_ENVIRONMENT_ID=... \
   -- node "$(pwd)/dist/server.js"
 ```
 
-Env vars: `P1_MCP_URL` (defaults to the admin-env URL baked from this demo's
-tenant), `P1_ENVIRONMENT_ID` (task-target env; specialists never search for
-it), `P1_SPECIALIST_MODEL`, `SPECIALIST_ENGINE`.
+Env vars: `P1_MCP_URL` (required — your PingOne MCP server URL; the admin
+env UUID inside it is the OAuth login env), `P1_ENVIRONMENT_ID` (task-target
+env; specialists never search for it), `P1_ACCESS_TOKEN` (CI/headless
+one-shots), `P1_SPECIALIST_MODEL`, `SPECIALIST_ENGINE`.
 
 ## Engines — the registry is model-independent
 

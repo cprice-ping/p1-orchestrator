@@ -5,15 +5,23 @@
  * Env: P1_MCP_URL, P1_ACCESS_TOKEN
  */
 
-import { fetchToolCatalog, DEFAULT_P1_MCP_URL } from "./launch.js";
+import { fetchToolCatalog } from "./launch.js";
 import { resolveToken } from "./auth.js";
 
-const url = process.env.P1_MCP_URL ?? DEFAULT_P1_MCP_URL;
+const url = process.env.P1_MCP_URL;
+
+if (!url) {
+  console.error(
+    "Set P1_MCP_URL=https://mcp.pingone.com/admin/<admin-env-uuid>/mcp first\n" +
+      "(the URL from your PingOne MCP server config).",
+  );
+  process.exit(1);
+}
 
 try {
   // Token via env → cache → refresh → one-time browser dance.
   const { token, via } = await resolveToken(
-    process.env.P1_ENVIRONMENT_ID ?? "2087f9ab-c416-45c4-92f1-22bbc894407c",
+    process.env.P1_ENVIRONMENT_ID ?? url.split("/admin/")[1]?.split("/")[0] ?? "",
     url,
   );
   console.error(`(token via: ${via})`);
