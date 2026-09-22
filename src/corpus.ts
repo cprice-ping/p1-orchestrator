@@ -27,7 +27,12 @@ export type Topic =
   | "app-creation"
   | "resource-grants"
   | "resources-scopes"
-  | "worker-apps";
+  | "worker-apps"
+  | "mfa-policies"
+  | "fido2-passkeys"
+  | "passwordless"
+  | "protect-policy-sets"
+  | "protect-predictors";
 
 export const DOC_MAP: Partial<Record<Topic, DocDoc[]>> = {
   "token-exchange": [
@@ -74,6 +79,70 @@ export const DOC_MAP: Partial<Record<Topic, DocDoc[]>> = {
         "worker = administrator client for platform APIs, permission via role assignments",
     },
   ],
+  "mfa-policies": [
+    {
+      title: "MFA Settings",
+      url: "https://developer.pingidentity.com/pingone-api/mfa/mfa-settings.md",
+      decides:
+        "environment-wide MFA settings: max paired devices, account lockout, pairing key format — context for any device-policy work",
+    },
+    {
+      title: "Create Sign-On Policy Action (MFA)",
+      url: "https://developer.pingidentity.com/pingone-api/platform/sign-on-policies/sign-on-policy-actions/create-sign-on-policy-action-mfa.md",
+      decides:
+        "the MFA sign-on policy action: which device types the action permits and how MFA is required during sign-on",
+    },
+    {
+      title: "Application Sign-On Policy Assignments",
+      url: "https://developer.pingidentity.com/pingone-api/platform/applications/application-sign-on-policy-assignments.md",
+      decides:
+        "sign-on policies attach to applications via assignments with priority — the placement step for any new policy",
+    },
+  ],
+  "fido2-passkeys": [
+    {
+      title: "FIDO Policies",
+      url: "https://developer.pingidentity.com/pingone-api/mfa/fido-policies.md",
+      decides:
+        "FIDO policies fine-tune FIDO2 authentication: allowed authenticators, attestation requirements, custom device metadata",
+    },
+    {
+      title: "Create FIDO Policy - FIDO-certified and enterprise",
+      url: "https://developer.pingidentity.com/pingone-api/mfa/fido-policies/create_fido_policy_certified_w_enterprise_attestation.md",
+      decides:
+        "enterprise attestation verifies the authenticator was organization-provided — the managed-passkey pattern",
+    },
+  ],
+  passwordless: [
+    {
+      title: "Login with Passwordless Authentication (workflow)",
+      url: "https://developer.pingidentity.com/pingone-api/workflow-library/pingone-mfa/login-with-passwordless-authentication.md",
+      decides:
+        "passwordless = sign-on policy with username + MFA action instead of a password; worked end-to-end example",
+    },
+  ],
+  "protect-policy-sets": [
+    {
+      title: "Create Risk Policy Set - Targeted Policy with Mitigations",
+      url: "https://developer.pingidentity.com/pingone-api/protect/risk-policies/create_risk_policy_set_targeted_w_mitigations.md",
+      decides:
+        "preferred Protect method: targeted policies with mitigations specifying recommended actions",
+    },
+    {
+      title: "Create Risk Policy Set (aggregated scores)",
+      url: "https://developer.pingidentity.com/pingone-api/protect/risk-policies/create_risk_policy_set_scores.md",
+      decides:
+        "legacy method: risk predictors combined via aggregated scores producing risk levels",
+    },
+  ],
+  "protect-predictors": [
+    {
+      title: "Risk Predictors (workflow index)",
+      url: "https://developer.pingidentity.com/pingone-api/protect/risk-predictors/create_risk_predictor_composite.md",
+      decides:
+        "composite predictor pattern: conditions across other predictors assigning risk levels",
+    },
+  ],
 };
 
 export interface DocDoc {
@@ -88,6 +157,11 @@ export const TOPIC_KEYWORDS: Partial<Record<Topic, string[]>> = {
   "app-creation": ["create", "app", "application", "oidc", "saml"],
   "resource-grants": ["grant", "scope"],
   "worker-apps": ["worker", "client_credentials", "platform api", "admin api"],
+  "mfa-policies": ["mfa", "multi-factor", "multifactor", "device policy", "2fa", "otp"],
+  "fido2-passkeys": ["fido", "fido2", "passkey", "webauthn", "passkeys", "yubikey", "security key", "biometric"],
+  passwordless: ["passwordless", "no password", "without password"],
+  "protect-policy-sets": ["risk policy", "policy set", "mitigations", "targeted policy"],
+  "protect-predictors": ["predictor", "risk level", "velocity", "bot detection", "anonymous network"],
 };
 
 export interface CorpusDoc {
