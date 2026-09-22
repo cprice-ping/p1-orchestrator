@@ -1,0 +1,23 @@
+# dependencies & build
+node_modules/
+dist/
+
+# environment & secrets — never commit tokens or keys
+.env
+.env.*
+*.pem
+*.key
+
+# the P1 OAuth token cache lives OUTSIDE the repo (~/.p1-orchestrator/),
+# but guard against any accidental token-shaped files landing here
+tokens.json
+*tokens*.json
+
+# os noise
+.DS_Store
+Thumbs.db
+
+# editor
+.idea/
+.vscode/
+*.swp

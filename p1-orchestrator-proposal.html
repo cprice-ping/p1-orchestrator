@@ -1,0 +1,423 @@
+<title>The Intent Layer</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --surface: #ffffff;
+    --ink: #17222e;
+    --ink-2: #51606f;
+    --ink-3: #8492a0;
+    --line: #dde3ea;
+    --accent: #0f6f8f;
+    --accent-soft: #e3eff4;
+    --ok: #1e7d45;
+    --ok-soft: #e4f2e9;
+    --warn: #a05a00;
+    --warn-soft: #f7ecd9;
+    --code-bg: #eef1f4;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+    --sans: "Inter", -apple-system, "Segoe UI", sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #12181f;
+      --surface: #1a222b;
+      --ink: #e4eaf0;
+      --ink-2: #9aa8b6;
+      --ink-3: #6b7a89;
+      --line: #2b3642;
+      --accent: #5cb0cd;
+      --accent-soft: #1d2f38;
+      --ok: #58b87e;
+      --ok-soft: #1d3328;
+      --warn: #d19a4a;
+      --warn-soft: #332a1a;
+      --code-bg: #212b35;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #12181f;
+    --surface: #1a222b;
+    --ink: #e4eaf0;
+    --ink-2: #9aa8b6;
+    --ink-3: #6b7a89;
+    --line: #2b3642;
+    --accent: #5cb87e;
+    --accent-soft: #1d2f38;
+    --ok: #58b87e;
+    --ok-soft: #1d3328;
+    --warn: #d19a4a;
+    --warn-soft: #332a1a;
+    --code-bg: #212b35;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.55;
+    padding: 32px clamp(16px, 5vw, 56px) 72px;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; }
+  h1, h2, h3 { line-height: 1.2; text-wrap: balance; }
+  h1 { font-size: 30px; font-weight: 700; margin: 0 0 6px; letter-spacing: -0.02em; }
+  h2 {
+    font-size: 19px;
+    margin: 44px 0 14px;
+    padding-top: 18px;
+    border-top: 1px solid var(--line);
+    letter-spacing: -0.01em;
+  }
+  h3 { font-size: 15px; margin: 24px 0 8px; }
+  p { margin: 0 0 14px; color: var(--ink); max-width: 70ch; }
+  .muted { color: var(--ink-2); }
+  .kicker {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 10px;
+  }
+  .lede { font-size: 17px; color: var(--ink-2); margin-bottom: 24px; max-width: 62ch; }
+  .meta {
+    display: flex; gap: 14px; flex-wrap: wrap;
+    font-size: 12.5px; color: var(--ink-3); margin-bottom: 28px;
+  }
+  code {
+    font-family: var(--mono);
+    font-size: 0.86em;
+    background: var(--code-bg);
+    padding: 1px 5px;
+    border-radius: 4px;
+  }
+  pre {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    line-height: 1.5;
+    background: var(--code-bg);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    margin: 14px 0;
+  }
+  pre code { background: none; padding: 0; }
+  .pill {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.06em;
+    padding: 2px 9px;
+    border-radius: 999px;
+    vertical-align: 1px;
+  }
+  .pill.ok { background: var(--ok-soft); color: var(--ok); }
+  .pill.warn { background: var(--warn-soft); color: var(--warn); }
+  .pill.accent { background: var(--accent-soft); color: var(--accent); }
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; margin: 14px 0; }
+  th {
+    text-align: left;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    font-weight: 500;
+    padding: 8px 12px 6px;
+    border-bottom: 1px solid var(--line);
+  }
+  td { padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  .num { font-variant-numeric: tabular-nums; }
+  .callout {
+    border-left: 3px solid var(--accent);
+    background: var(--accent-soft);
+    border-radius: 0 8px 8px 0;
+    padding: 12px 16px;
+    margin: 18px 0;
+    font-size: 14px;
+  }
+  .callout p { margin: 0; color: var(--ink); }
+  .diagram {
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.55;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 18px 14px;
+    overflow-x: auto;
+    margin: 16px 0;
+    white-space: pre;
+    color: var(--ink-2);
+  }
+  .diagram b { color: var(--accent); font-weight: 600; }
+  .diagram i { color: var(--ink-3); font-style: normal; }
+  ul, ol { margin: 0 0 14px; padding-left: 22px; max-width: 70ch; }
+  li { margin-bottom: 6px; }
+  .stat-row {
+    display: flex; gap: 12px; flex-wrap: wrap; margin: 18px 0 6px;
+  }
+  .stat {
+    flex: 1 1 140px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 14px 16px 12px;
+  }
+  .stat .n {
+    font-size: 26px; font-weight: 700; letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums;
+  }
+  .stat .l {
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--ink-3); margin-top: 3px;
+  }
+  footer {
+    margin-top: 52px; padding-top: 16px; border-top: 1px solid var(--line);
+    font-size: 12.5px; color: var(--ink-3);
+  }
+  @media (max-width: 560px) {
+    h1 { font-size: 24px; }
+    .stat { flex: 1 1 40%; }
+  }
+</style>
+
+<title>The Intent Layer</title>
+
+<div class="wrap">
+
+  <div class="kicker">P1 MCP SERVER · ALTERNATE CONSUMPTION PATTERN</div>
+  <h1>Specialists over the raw tool supply</h1>
+  <p class="lede">
+    A reference implementation — built and run against a live PingOne tenant —
+    of an intent layer above the PingOne MCP Server: one admin intent in, a
+    specialist agent plans and executes the raw tool calls, and the caller
+    never touches the 78-tool catalog.
+  </p>
+  <div class="meta">
+    <span>Chris Price · Identity Architecture</span>
+    <span>2026-09-21</span>
+    <span>Reference implementation: <code>p1-orchestrator</code></span>
+  </div>
+
+  <h2 id="problem">The problem: 78 tools, no procedure</h2>
+  <p>
+    The PingOne MCP Server exposes <span class="num">78</span> tools spanning
+    every service — the right surface for a human-driven generalist, and a
+    poor one for any agent asked to complete real work:
+  </p>
+  <ul>
+    <li><strong>Schema tax.</strong> All 78 tool definitions ride in the
+      model's context on every turn, whether or not the task touches them.</li>
+    <li><strong>No procedural knowledge.</strong> Tool descriptions say what
+      each tool does; none say how tools chain. The knowledge that OIDC
+      scopes live on <em>Resources</em> and get granted to <em>Applications</em>
+      — via a second round-trip through <code>updateApplication</code> with a
+      <code>createGrant</code> operation — is tribal. Every consumer
+      rediscovers it, or gets it wrong.</li>
+    <li><strong>Cross-service flows have no home.</strong> The
+      "onboard an application" task spans Applications + Resources + scopes.
+      A tool catalog sliced by service cannot express it; skills patch this
+      by extending context — the same tax, paid again.</li>
+  </ul>
+
+  <div class="callout">
+    <p><strong>The thesis:</strong> the tool subset is only half the win.
+      The other half is the playbook. A specialist with 10 tools and a written
+      procedure outperforms a generalist with 78 tools and none — and the
+      subset is data, so the pattern survives every tool Ping adds.</p>
+  </div>
+
+  <h2 id="pattern">The pattern</h2>
+  <p>Three layers, each doing one job:</p>
+  <div class="diagram"><b>Client</b> (Claude Code · IDE · any MCP client)
+  │  sees 4 one-line tools — not 78 schemas
+  ▼
+<b>Orchestrator MCP Server</b>   <i>— this repo, ~500 lines</i>
+  │  routes intent → specialist, resolves auth & environmentId once
+  │  per call: fresh agent loop, own persona, own tool subset
+  ▼
+<b>Specialist</b>   <i>— bounded LLM loop, playbook + tool subset</i>
+  │  e.g. app_onboarding: 10 of 78 tools, procedure in its prompt
+  ▼
+<b>PingOne MCP Server</b>   <i>— unchanged, raw tool supply</i>
+  │
+  ▼
+<b>PingOne platform</b></div>
+  <p>Each specialist is defined declaratively — name, routing one-liner, tool
+    subset, playbook. The launcher computes the tool deny-list as the
+    <em>complement</em> of the subset against the live catalog, so upstream
+    changes to the PingOne server require no change here:</p>
+  <pre>app_onboarding (10 of 78 tools):
+  listApplications · getApplication · createApplication · updateApplication
+  deleteApplication · listApplicationCatalog · listResources · getResource
+  listEnvironments · getEnvironment
+
++ playbook: resolve resource → create app → grant scopes → verify
++ shared rules: secrets masked · env hoisted · confirm destructive ops</pre>
+
+  <h2 id="auth">Auth composes — nothing new to invent</h2>
+  <p>The orchestrator is itself a conforming MCP client of the PingOne MCP
+    Server, so it runs the <em>same</em> authorization the server already
+    supports — the pre-wired <code>pingone-mcp-server</code> client, OIDC
+    authorization code + PKCE, the admin signing in as a person in a browser
+    once. Tokens cache and refresh; the human never sees the browser again
+    until refresh-token expiry. An unattended (worker-app, client-credentials)
+    arm is available for headless deployments; both resolve through one
+    interface, chosen at config time:</p>
+  <pre>Admin-person OAuth (default)     Worker app (headless)
+  browser login, once              client credentials
+  identity = the human admin       identity = service principal
+  audit trail: named person        audit trail: the service
+  role-scoped in PingOne           role-scoped in PingOne</pre>
+
+  <h2 id="evidence">Proven against a live tenant</h2>
+  <div class="stat-row">
+    <div class="stat"><div class="n">78→10</div><div class="l">tools in specialist scope</div></div>
+    <div class="stat"><div class="n">4</div><div class="l">tools the client sees</div></div>
+    <div class="stat"><div class="n">31s</div><div class="l">create-app, end to end</div></div>
+    <div class="stat"><div class="n">6</div><div class="l">MCP calls per task</div></div>
+  </div>
+  <p><strong>Worked example 1 — create.</strong> Intent: <em>"Create an OIDC
+    web app named orchestrator-probe-app with scopes openid, profile, email,
+    PKCE enforced, redirect localhost:3000/callback, enabled."</em> The
+    specialist created the app, located the <code>openid</code> Resource,
+    granted the three scopes as a grant, verified by read-back, and reported
+    — including which things it deliberately left undone and how to retrieve
+    the secret it cannot see. Independently verified field-by-field
+    afterward.</p>
+  <p><strong>Worked example 2 — update.</strong> Intent: <em>"Add redirect
+    URI http://localhost:8081/oidc/callback, keeping all existing
+    config."</em> Three tool calls: filtered lookup, array-preserving
+    update (it knew <code>redirectUris</code> replaces, not merges), verify.
+    The report enumerated everything confirmed unchanged — including the
+    scope grant from example 1.</p>
+  <p><strong>What the caller saw in both cases:</strong> one tool call with
+    one sentence of intent, then a compact report with every ID touched.
+    <strong>What the platform saw:</strong> a scoped, named human identity
+    making conventional API calls.</p>
+
+  <h3>Visibility, by design</h3>
+  <p>Specialists are not black boxes. Every run emits all three lenses:</p>
+  <ul>
+    <li><strong>Live</strong> — MCP progress notifications stream each tool
+      call and narration as it happens.</li>
+    <li><strong>Audit</strong> — a structured NDJSON run log per execution:
+      every call with arguments, timestamped, grep-able.</li>
+    <li><strong>Interactive</strong> — each run returns a session id; the
+      specialist can be resumed and interrogated afterward.</li>
+  </ul>
+
+  <h2 id="why">Why this wins on context and cost</h2>
+  <ul>
+    <li><strong>Client context.</strong> The orchestrating agent holds 4 tool
+      one-liners instead of 78 full schemas — and the playbooks never enter
+      the client's context at all.</li>
+    <li><strong>Specialist context is bounded and disposable.</strong> Each
+      run starts fresh with its subset and procedure; the orchestrator only
+      accumulates compact summaries, while a flat setup accumulates every
+      intermediate API response.</li>
+    <li><strong>Model tiering is a config decision.</strong> Specialists
+      inherit the deployment's model by default; each specialist can pin a
+      cheaper tier in the registry. Routing (the client's model) stays
+      expensive; execution doesn't have to be.</li>
+    <li><strong>Upstream-proof.</strong> Ping adds tool #79 → the deny list
+      recomputes. Nothing in this repo changes.</li>
+  </ul>
+
+  <h2 id="deploy">Local is the demo; hosting is Product's call</h2>
+  <p>This reference implementation ships as a <strong>local stdio MCP
+    server</strong> for one admin — deliberately. Hosting was explored and
+    the finding matters: a hosted orchestrator that serves one environment
+    and effectively one identity gains nothing over local, and multi-user
+    deployment raises decisions that belong to the product team (per-user
+    token stores against a configured login env, ingress auth, a
+    destructive-op deny-gate, idempotency). The <em>specialist pattern</em>
+    is the contribution; the deployment topology is theirs to choose.</p>
+  <table>
+    <tr><th></th><th>Local (this reference)</th><th>Hosted (Product's call)</th></tr>
+    <tr>
+      <td><strong>Form</strong></td>
+      <td>stdio MCP server on the admin's machine</td>
+      <td>HTTP MCP service (Cloud Run / k8s)</td>
+    </tr>
+    <tr>
+      <td><strong>Attach</strong></td>
+      <td><code>claude mcp add p1-orchestrator …</code></td>
+      <td><code>mcp add --transport http https://orchestrator/mcp</code></td>
+    </tr>
+    <tr>
+      <td><strong>Model config</strong></td>
+      <td>inherits the local CLI's model</td>
+      <td>server env: one model connection per deployment</td>
+    </tr>
+    <tr>
+      <td><strong>Auth</strong></td>
+      <td>admin OAuths once per machine (pre-wired client, token+URL agree by construction)</td>
+      <td>per-caller tokens against a <em>configured</em> login env (URL no longer implies it); ingress auth in front</td>
+    </tr>
+    <tr>
+      <td><strong>Trust chain</strong></td>
+      <td colspan="2" class="muted">Identical in both: P1-minted admin-person token → PingOne checks admin roles → P1 MCP checks per-env enablement → secret refusal. The layer adds narrowing, never bypass; audit attribution stays with the person.</td>
+    </tr>
+  </table>
+  <div class="callout">
+    <p><strong>What hosting adds</strong> (the graduation checklist, not a
+      rework): per-user token storage keyed by caller · ingress auth (org
+      SSO/mTLS) · a deny-gate for destructive ops (the one boundary P1's
+      enforcement can't express — it knows who may act, not what this
+      service should do) · idempotency keys on 25s tool calls · centralized
+      run-log forwarding · concurrency caps. None of it reworks the
+      architecture: the registry, the loops, and the visibility are
+      deployment-agnostic by construction.</p>
+  </div>
+
+  <h2 id="asks">What we're asking of the product team</h2>
+  <ol>
+    <li><strong>Endorse the pattern, not the implementation.</strong> The
+      PingOne MCP Server stays exactly what it is — raw tool supply. The
+      intent layer composes because the auth model composes. We're asking
+      that official guidance treat "wrap it" as a supported consumption
+      mode — and that hosting decisions (multi-user, multi-env) come from
+      Product, informed by the graduation checklist above rather than
+      prescribed by us.</li>
+    <li><strong>Keep the pre-wired OAuth client</strong>
+      (<code>pingone-mcp-server</code>) — it is what makes layered clients
+      possible with zero registration ceremony. Document it.</li>
+    <li><strong>Consider shipping the routing metadata</strong> the catalog
+      lacks: machine-readable groupings (which tools belong to which
+      use-case), and task-level hints (scopes live on Resources). The
+      playbooks in this repo are a starting corpus.</li>
+    <li><strong>A composite-tool escape hatch.</strong> Where a flow turns
+      out fully deterministic (this app-creation sequence is close), a single
+      composite tool with no LLM in the middle is even cheaper. The server
+      could ship such composites natively.</li>
+  </ol>
+
+  <h2 id="limits">Honest limits</h2>
+  <ul>
+    <li><strong>One extra LLM hop per dispatch.</strong> Trivial single-call
+      tasks lose; multi-step workflows win. The probe data here covers the
+      multi-step cases — where the win is real.</li>
+    <li><strong>Routing quality = description quality.</strong> The one-liner
+      is the whole routing surface; crisp wording matters, and two
+      specialists with overlapping scopes would fight.</li>
+    <li><strong>Static subsets need curation.</strong> Deny-complement
+      filtering survives upstream additions automatically, but a new tool
+      that belongs in a subset still needs a registry edit — that's a
+      feature (curation is the point), not a bug.</li>
+    <li><strong>Latency.</strong> 20–31s per specialist run is fine for admin
+      workflows, wrong for interactive chat loops.</li>
+  </ul>
+
+  <footer>
+    Reference implementation at <code>Documents/GitHub/Headless</code> —
+    specialist registry, launcher, orchestrator server, probes, and run logs
+    from the live-tenant validation in this document. Two worked examples
+    remain in the tenant (<code>orchestrator-probe-app</code>) for
+    demonstration.
+  </footer>
+</div>

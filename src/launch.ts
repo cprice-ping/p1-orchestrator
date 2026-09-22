@@ -1,0 +1,323 @@
+/**
+ * launch.ts — spawn one specialist agent loop and return its report.
+ *
+ * Generic across specialists: everything specialist-specific lives in the
+ * registry (description, tools, playbook). This file is small on purpose;
+ * the transferable logic is data, not code.
+ *
+ * Tool filtering is dynamic: we fetch the live tool catalog from the P1 MCP
+ * server (JSON-RPC tools/list) and deny the complement of the specialist's
+ * subset. Adding tools upstream changes nothing here.
+ */
+
+import { query } from "@anthropic-ai/claude-agent-sdk";
+import { appendFile, mkdir } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import type { SpecialistDef } from "./registry.js";
+import { MCP_SERVER_NAME, SHARED_RULES } from "./registry.js";
+import { resolveToken } from "./auth.js";
+
+export interface LaunchInput {
+  intent: string;
+  environmentId: string;
+  /** Follow-up instruction on an existing specialist session. */
+  followUp?: string;
+  sessionId?: string;
+  maxTurns?: number;
+}
+
+/** Streaming progress events, for live visibility into a running specialist. */
+export type SpecialistEvent =
+  | { kind: "init"; servers: string; visibleMcpTools: number }
+  | { kind: "tool_call"; name: string; argsPreview: string }
+  | { kind: "text"; text: string }
+  | { kind: "done"; isError: boolean; toolCalls: number; ms: number };
+
+export interface LaunchCallbacks {
+  onEvent?: (e: SpecialistEvent) => void;
+}
+
+export interface LaunchOutput {
+  sessionId: string;
+  report: string;
+  toolCalls: string[];
+  /** One-line JSON arg preview per tool call, aligned with toolCalls. */
+  toolArgs: string[];
+  isError: boolean;
+  /** Diagnostic detail on failure (init statuses etc.). */
+  diagnostics?: string;
+  /** Path to the persisted NDJSON run log. */
+  logPath: string;
+}
+
+/**
+ * Fetch the tool catalog from the remote MCP server via raw JSON-RPC
+ * (initialize + tools/list). Used to compute the deny-complement and to
+ * validate subsets against reality at startup.
+ */
+export async function fetchToolCatalog(
+  url: string,
+  accessToken: string,
+): Promise<string[]> {
+  const headers = {
+    "Content-Type": "application/json",
+    Accept: "application/json, text/event-stream",
+    Authorization: `Bearer ${accessToken}`,
+  };
+
+  const post = (body: unknown, sessionId?: string) =>
+    fetch(url, {
+      method: "POST",
+      headers: sessionId ? { ...headers, "mcp-session-id": sessionId } : headers,
+      body: JSON.stringify(body),
+    });
+
+  // initialize
+  const initRes = await post({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "initialize",
+    params: {
+      protocolVersion: "2025-03-26",
+      capabilities: {},
+      clientInfo: { name: "p1-orchestrator", version: "0.1.0" },
+    },
+  });
+  if (!initRes.ok) {
+    throw new Error(
+      `MCP initialize failed: ${initRes.status} ${await initRes.text()}`,
+    );
+  }
+  const session = initRes.headers.get("mcp-session-id") ?? undefined;
+  await initRes.text(); // drain
+
+  // initialized notification
+  await post({ jsonrpc: "2.0", method: "notifications/initialized" }, session);
+
+  // tools/list
+  const listRes = await post(
+    { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} },
+    session,
+  );
+  if (!listRes.ok) {
+    throw new Error(
+      `MCP tools/list failed: ${listRes.status} ${await listRes.text()}`,
+    );
+  }
+  const body = (await listRes.json()) as {
+    result?: { tools?: { name: string }[] };
+  };
+  return (body.result?.tools ?? []).map((t) => t.name);
+}
+
+/**
+ * Complement of the specialist's subset, in mcp__server__tool form.
+ */
+export function computeDenyList(
+  allTools: string[],
+  subset: readonly string[],
+): string[] {
+  const allowed = new Set(subset);
+  return allTools
+    .filter((t) => !allowed.has(t))
+    .map((t) => `mcp__${MCP_SERVER_NAME}__${t}`);
+}
+
+export const DEFAULT_P1_MCP_URL =
+  "https://mcp.pingone.com/admin/2087f9ab-c416-45c4-92f1-22bbc894407c/mcp";
+
+/** Extract the admin env UUID from an mcp.pingone.com URL. */
+export function envIdFromMcpUrl(url: string): string | undefined {
+  const m = url.match(/\/admin\/([0-9a-f-]{36})\/mcp/);
+  return m?.[1];
+}
+
+/** Which model runtime executes specialist loops. Selected by
+ *  SPECIALIST_ENGINE: "claude" (default) or "gemini". */
+export type EngineName = "claude" | "gemini";
+
+export function currentEngine(): EngineName {
+  const e = (process.env.SPECIALIST_ENGINE ?? "claude").toLowerCase();
+  if (e !== "claude" && e !== "gemini") {
+    throw new Error(`Unknown SPECIALIST_ENGINE '${e}' (use "claude" or "gemini")`);
+  }
+  return e;
+}
+
+/**
+ * Engine dispatch. The registry (playbook, subset, description) is identical
+ * for both; only loop mechanics differ. Callers stay engine-agnostic.
+ */
+export async function launchSpecialist(
+  input: LaunchInput,
+  def: SpecialistDef,
+  callbacks?: LaunchCallbacks,
+): Promise<LaunchOutput> {
+  if (currentEngine() === "gemini") {
+    const { launchSpecialistGemini } = await import("./engines/gemini.js");
+    return launchSpecialistGemini(input, def, callbacks);
+  }
+  return launchSpecialistClaude(input, def, callbacks);
+}
+
+async function launchSpecialistClaude(
+  input: LaunchInput,
+  def: SpecialistDef,
+  callbacks?: LaunchCallbacks,
+): Promise<LaunchOutput> {
+  const url = process.env.P1_MCP_URL ?? DEFAULT_P1_MCP_URL;
+
+  // Resolve the token at call time: env override → cached → refresh →
+  // one-time browser flow (same pre-wired client the P1 MCP server uses).
+  const auth = await resolveToken(envIdFromMcpUrl(url) ?? "", url);
+  const accessToken = auth.token;
+
+  const allTools = await fetchToolCatalog(url, accessToken);
+  const disallowed = computeDenyList(allTools, def.tools);
+  const allowed = def.tools.map((t) => `mcp__${MCP_SERVER_NAME}__${t}`);
+
+  const task = input.followUp ?? input.intent;
+  const prompt = [`environmentId: ${input.environmentId}`, "", "Task:", task].join(
+    "\n",
+  );
+
+  const options: Record<string, unknown> = {
+    settingSources: [], // clean-room: no Claude Code settings/skills/CLAUDE.md
+    systemPrompt: `${SHARED_RULES}\n\n${def.playbook}`,
+    // Model resolution: specialist override → deployment override
+    // (P1_SPECIALIST_MODEL) → inherit the orchestrator's own model env.
+    model: def.model ?? process.env.P1_SPECIALIST_MODEL ?? process.env.ANTHROPIC_MODEL,
+    maxTurns: input.maxTurns ?? 20,
+    mcpServers: {
+      [MCP_SERVER_NAME]: {
+        type: "http",
+        url,
+        headers: { Authorization: `Bearer ${accessToken}` },
+      },
+    },
+    allowedTools: allowed,
+    disallowedTools: disallowed,
+    // Headless, nobody to prompt; the subset itself is the guardrail.
+    permissionMode: "bypassPermissions",
+    allowDangerouslySkipPermissions: true,
+  };
+
+  if (input.sessionId) {
+    options.resume = input.sessionId;
+  }
+
+  let sessionId = "";
+  const toolCalls: string[] = [];
+  const toolArgs: string[] = [];
+  let report = "";
+  let isError = false;
+  let diagnostics = "";
+  const t0 = Date.now();
+
+  // Persisted run log: ~/.p1-orchestrator/runs/<ts>-<specialist>.jsonl
+  const runsDir = join(homedir(), ".p1-orchestrator", "runs");
+  await mkdir(runsDir, { recursive: true });
+  const logPath = join(
+    runsDir,
+    `${new Date().toISOString().replace(/[:.]/g, "-")}-${def.name}.ndjson`,
+  );
+  const log = (obj: unknown) =>
+    appendFile(logPath, JSON.stringify(obj) + "\n").catch(() => {});
+
+  const emit = (e: SpecialistEvent) => callbacks?.onEvent?.(e);
+
+  for await (const message of query({ prompt, options: options as never })) {
+    if (message.type === "system" && message.subtype === "init") {
+      const init = message as unknown as {
+        session_id?: string;
+        mcp_servers?: { name: string; status: string }[];
+        tools?: string[];
+      };
+      sessionId = init.session_id ?? "";
+      if (init.mcp_servers) {
+        diagnostics += init.mcp_servers
+          .map((s) => `${s.name}:${s.status}`)
+          .join(",");
+      }
+      let visible = 0;
+      if (init.tools) {
+        visible = init.tools.filter((t) => t.startsWith("mcp__")).length;
+        diagnostics += ` | visible_mcp_tools=${visible}`;
+      }
+      const initEvt: SpecialistEvent = {
+        kind: "init",
+        servers: diagnostics.split(" |")[0],
+        visibleMcpTools: visible,
+      };
+      await log({ ts: new Date().toISOString(), event: "init", ...initEvt });
+      emit(initEvt);
+    }
+
+    if (message.type === "assistant") {
+      const content = (message as { message?: { content?: unknown[] } })
+        .message?.content;
+      if (Array.isArray(content)) {
+        for (const block of content) {
+          if (!block || typeof block !== "object") continue;
+          const b = block as {
+            type?: string;
+            name?: string;
+            input?: unknown;
+            text?: string;
+          };
+          if (b.type === "tool_use") {
+            const name = b.name ?? "?";
+            toolCalls.push(name);
+            // Compact arg preview: first ~120 chars of the interesting bits.
+            const preview = JSON.stringify(b.input ?? {}) // structured per call
+              .replace(/environmentId":"[^"]+"/g, 'environmentId":"…"')
+              .slice(1, 140);
+            toolArgs.push(preview);
+            await log({
+              ts: new Date().toISOString(),
+              event: "tool_call",
+              name,
+              argsPreview: preview,
+            });
+            emit({ kind: "tool_call", name, argsPreview: preview });
+          } else if (b.type === "text" && b.text?.trim()) {
+            await log({
+              ts: new Date().toISOString(),
+              event: "text",
+              text: b.text.slice(0, 500),
+            });
+            emit({ kind: "text", text: b.text });
+          }
+        }
+      }
+    }
+
+    if (message.type === "result") {
+      const res = message as unknown as {
+        subtype?: string;
+        session_id?: string;
+        result?: string;
+      };
+      sessionId = res.session_id ?? sessionId;
+      isError = res.subtype !== "success";
+      report = res.result ?? "";
+      if (isError) diagnostics += ` | result=${res.subtype}`;
+      await log({
+        ts: new Date().toISOString(),
+        event: "done",
+        isError,
+        report,
+        sessionId,
+      });
+      emit({
+        kind: "done",
+        isError,
+        toolCalls: toolCalls.length,
+        ms: Date.now() - t0,
+      });
+    }
+  }
+
+  return { sessionId, report, toolCalls, toolArgs, isError, diagnostics, logPath };
+}
