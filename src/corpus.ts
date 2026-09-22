@@ -101,129 +101,75 @@ export interface CorpusDoc {
 const MAX_EXCERPT_CHARS = 1600;
 
 // ---------------------------------------------------------------------------
-// Dynamic tier: live llms.txt index matching + pin freshness checking.
+// Tier 2: semantic doc retrieval via the P1 Docs MCP service
+// (https://docs.pingidentity.com/mcp — agent-fronted, interprets intent).
+// Replaces the former llms.txt scrape: no URLs held locally, no index TTL,
+// new pages discoverable the moment they publish. Auth-free; the specialist
+// never calls this directly — the orchestrator assembles context at dispatch.
 // ---------------------------------------------------------------------------
 
-const INDEX_URL = "https://developer.pingidentity.com/pingone-api/llms.txt";
-const INDEX_TTL_MS = 60 * 60 * 1000; // 1h
-let indexCache: { at: number; entries: IndexEntry[] } | null = null;
+const DOCS_MCP_URL =
+  process.env.P1_DOCS_MCP_URL ?? "https://docs.pingidentity.com/mcp";
+const DOCS_DOCSET_FILTER = ["pingone"];
 
-interface IndexEntry {
+interface DocsSearchResult {
   title: string;
   url: string;
-  description: string;
+  excerpt: string;
 }
 
-async function loadIndex(): Promise<IndexEntry[]> {
-  if (indexCache && Date.now() - indexCache.at < INDEX_TTL_MS) {
-    return indexCache.entries;
-  }
-  const res = await fetch(INDEX_URL, { headers: { Accept: "text/plain" } });
-  if (!res.ok) throw new Error(`llms.txt fetch failed: ${res.status}`);
-  const text = await res.text();
-  const entries: IndexEntry[] = [];
-  for (const line of text.split("\n")) {
-    const m = line.match(/^- \[([^\]]+)\]\((https:\S+\.md)\)(?::\s*(.+))?$/);
-    if (m) entries.push({ title: m[1], url: m[2], description: m[3] ?? "" });
-  }
-  indexCache = { at: Date.now(), entries };
-  return entries;
-}
-
-/** Keyword score of an index entry against the intent. */
-function scoreEntry(e: IndexEntry, words: string[]): number {
-  const hay = `${e.title} ${e.description}`.toLowerCase();
-  let score = 0;
-  for (const w of words) {
-    const hits = hay.split(w).length - 1;
-    if (hits > 0) score += hits * Math.min(w.length / 4, 3);
-  }
-  return score;
-}
-
-/**
- * Dynamic tier: top-N index entries matching the intent, excluding pins.
- * Best-effort — the index is a catalog of titles, so keyword scoring over
- * title+description is the whole trick. Misses are a signal the curated
- * map needs a pin, not an error.
- */
-export async function indexMatch(
-  intent: string,
-  topN = 2,
-  excludeUrls: string[] = [],
-): Promise<DocDoc[]> {
-  const words = intent.toLowerCase().split(/[^a-z_:-]+/).filter((w) => w.length > 3);
-  const entries = await loadIndex();
-  const excluded = new Set(excludeUrls);
-  return entries
-    .filter((e) => !excluded.has(e.url))
-    .map((e) => ({ e, s: scoreEntry(e, words) }))
-    .filter(({ s }) => s > 0)
-    .sort((a, b) => b.s - a.s)
-    .slice(0, topN)
-    .map(({ e }) => ({
-      title: e.title,
-      url: e.url,
-      decides: "auto-matched from live docset index (llms.txt)",
-    }));
-}
-
-// ---------------------------------------------------------------------------
-// Pin freshness: do curated pins still resolve, and still appear in the
-// docset index? Run at startup / on a schedule / as a one-shot CLI.
-// ---------------------------------------------------------------------------
-
-export interface PinHealth {
-  url: string;
-  topic: string;
-  title: string;
-  status: "ok" | "drift" | "dead";
-  detail?: string;
-}
-
-export interface PinReport {
-  checkedAt: string;
-  total: number;
-  dead: number;
-  drift: number;
-  pins: PinHealth[];
-}
-
-export async function checkPinFreshness(): Promise<PinReport> {
-  const pins: { topic: string; doc: DocDoc }[] = [];
-  for (const [topic, docs] of Object.entries(DOC_MAP) as [Topic, DocDoc[]][]) {
-    for (const doc of docs) pins.push({ topic, doc });
-  }
-  const index = await loadIndex().catch(() => [] as IndexEntry[]);
-  const knownUrls = new Set(index.map((e) => e.url));
-
-  const results: PinHealth[] = [];
-  for (const { topic, doc } of pins) {
+/** Minimal MCP client for the docs server (no auth, stateful HTTP). */
+async function docsMcpSearch(
+  query: string,
+  topK: number,
+): Promise<DocsSearchResult[]> {
+  const { McpToolClient } = await import("./engines/mcp-client.js");
+  const client = new McpToolClient(DOCS_MCP_URL, "");
+  try {
+    const result = (await client.callTool("docsets_search", {
+      query,
+      docs: DOCS_DOCSET_FILTER,
+      search_mode: "hybrid",
+      top_k: topK,
+    })) as { content: { type: string; text?: string }[] };
+    const text = result.content.map((c) => c.text ?? "").join("\n");
+    // The tool returns a JSON array of chunks with embedded sources.
+    let parsed: { text?: string }[] = [];
     try {
-      const res = await fetch(doc.url, { method: "HEAD", headers: { Accept: "text/markdown" } });
-      if (res.status === 404) {
-        results.push({ url: doc.url, topic, title: doc.title, status: "dead", detail: "404 — pin needs re-curation" });
-      } else if (!res.ok) {
-        results.push({ url: doc.url, topic, title: doc.title, status: "drift", detail: `HTTP ${res.status}` });
-      } else {
-        results.push({
-          url: doc.url,
-          topic,
-          title: doc.title,
-          status: knownUrls.size === 0 || knownUrls.has(doc.url) ? "ok" : "drift",
-          detail: knownUrls.size > 0 && !knownUrls.has(doc.url) ? "not in current llms.txt — moved or retitled?" : undefined,
-        });
-      }
-    } catch (err) {
-      results.push({ url: doc.url, topic, title: doc.title, status: "drift", detail: err instanceof Error ? err.message : String(err) });
+      const parsed = JSON.parse(text.trim());
+      if (Array.isArray(parsed)) parsed as { text?: string }[];
+      const arr = parsed as { text?: string }[];
+      if (Array.isArray(arr)) return arr.map(extractSource);
+    } catch {
+      /* fall through: chunked SSE-ish text */
     }
+    // Fallback: parse any JSON array embedded in the text.
+    const m = text.match(/\[\s*{[\s\S]*}\s*\]/);
+    if (m) {
+      try {
+        const arr = JSON.parse(m[0]) as { text?: string }[];
+        return arr.map(extractSource);
+      } catch {
+        /* fall through */
+      }
+    }
+    return [extractSource({ text })];
+  } finally {
+    await client.close().catch(() => {});
   }
+}
+
+/** Pull title + source URL out of one docsets_search chunk. */
+function extractSource(chunk: { text?: string }): DocsSearchResult {
+  const t = chunk.text ?? "";
+  // Sources appear as trailing https://... lines in each chunk.
+  const urls = [...t.matchAll(/https:\/\/[^\s">]+?\.html/g)].map((m) => m[0]);
+  const url = urls.at(-1) ?? "";
+  const titleMatch = t.match(/^(.{5,120})/);
   return {
-    checkedAt: new Date().toISOString(),
-    total: results.length,
-    dead: results.filter((r) => r.status === "dead").length,
-    drift: results.filter((r) => r.status === "drift").length,
-    pins: results,
+    title: (titleMatch?.[1] ?? "docs chunk").trim(),
+    url,
+    excerpt: t.slice(0, MAX_EXCERPT_CHARS),
   };
 }
 
@@ -306,12 +252,22 @@ export async function gatherContext(
   }
   docs = healthy;
 
-  // Dynamic tier: fill to a bound from the live llms.txt index.
+  // Dynamic tier: semantic retrieval from the P1 Docs MCP service.
   try {
-    const extra = await indexMatch(low, 2, docs.map((d) => d.url));
-    docs = [...docs, ...extra].slice(0, 5);
+    const searchQuery = `${intent} ${[...topics].join(" ")}`;
+    const hits = await docsMcpSearch(searchQuery, 3);
+    const pinnedUrls = new Set(docs.map((d) => d.url));
+    const extras: DocDoc[] = hits
+      .filter((h) => h.url && !pinnedUrls.has(h.url))
+      .slice(0, 2)
+      .map((h) => ({
+        title: h.title,
+        url: h.url,
+        decides: "retrieved from P1 Docs MCP (docs.pingidentity.com/mcp)",
+      }));
+    docs = [...docs, ...extras].slice(0, 5);
   } catch (err) {
-    console.error("[corpus] index match failed (pins only):", err instanceof Error ? err.message : err);
+    console.error("[corpus] docs-mcp search failed (pins only):", err instanceof Error ? err.message : err);
   }
   if (docs.length === 0) return [];
 
@@ -324,4 +280,56 @@ export async function gatherContext(
     ),
   );
   return results.filter((r): r is CorpusDoc => r !== null);
+}
+
+// ---------------------------------------------------------------------------
+// Pin freshness: HEAD-probe each curated pin to confirm it still resolves.
+// (Content freshness is the docs service's job now; this validates only
+// that our hand-curated overrides still point at real pages.)
+// ---------------------------------------------------------------------------
+
+export interface PinHealth {
+  url: string;
+  topic: string;
+  title: string;
+  status: "ok" | "drift" | "dead";
+  detail?: string;
+}
+
+export interface PinReport {
+  checkedAt: string;
+  total: number;
+  dead: number;
+  drift: number;
+  pins: PinHealth[];
+}
+
+export async function checkPinFreshness(): Promise<PinReport> {
+  const pins: { topic: string; doc: DocDoc }[] = [];
+  for (const [topic, docs] of Object.entries(DOC_MAP) as [Topic, DocDoc[]][]) {
+    for (const doc of docs) pins.push({ topic, doc });
+  }
+
+  const results: PinHealth[] = [];
+  for (const { topic, doc } of pins) {
+    try {
+      const res = await fetch(doc.url, { method: "HEAD", headers: { Accept: "text/markdown" } });
+      if (res.status === 404) {
+        results.push({ url: doc.url, topic, title: doc.title, status: "dead", detail: "404 — pin needs re-curation" });
+      } else if (!res.ok) {
+        results.push({ url: doc.url, topic, title: doc.title, status: "drift", detail: `HTTP ${res.status}` });
+      } else {
+        results.push({ url: doc.url, topic, title: doc.title, status: "ok" });
+      }
+    } catch (err) {
+      results.push({ url: doc.url, topic, title: doc.title, status: "drift", detail: err instanceof Error ? err.message : String(err) });
+    }
+  }
+  return {
+    checkedAt: new Date().toISOString(),
+    total: results.length,
+    dead: results.filter((r) => r.status === "dead").length,
+    drift: results.filter((r) => r.status === "drift").length,
+    pins: results,
+  };
 }

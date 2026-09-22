@@ -92,7 +92,31 @@ export class McpToolClient {
   }
 
   async callTool(name: string, args: Record<string, unknown>): Promise<ToolCallPayload> {
+    // Lazy session: some servers (docs.pingidentity.com) reject tools/call
+    // without a session established by initialize.
+    if (!this.sessionId) await this.init();
     const result = (await this.rpc("tools/call", { name, arguments: args })) as ToolCallPayload;
     return result;
+  }
+
+  /** Release the session (idempotent). */
+  async close(): Promise<void> {
+    if (!this.sessionId) return;
+    const sid = this.sessionId;
+    this.sessionId = undefined;
+    try {
+      await fetch(this.url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json, text/event-stream",
+          Authorization: `Bearer ${this.token}`,
+          "mcp-session-id": sid,
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/cancelled", params: {} }),
+      }).catch(() => {});
+    } catch {
+      /* best-effort teardown */
+    }
   }
 }

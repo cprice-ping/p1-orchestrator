@@ -1,7 +1,9 @@
 /**
- * pin-check.ts — one-shot corpus freshness check: every curated pin is
- * HEAD-probed and cross-checked against the live llms.txt index.
- * Run before demos, in CI, or on a schedule.
+ * pin-check.ts — freshness check for curated pins: every pin is HEAD-probed
+ * to confirm it still resolves. Content freshness is the docs service's job
+ * (agent-fronted retrieval over the live corpus); this only validates that
+ * our hand-curated overrides still point at real pages. Run in CI or
+ * pre-demo.
  */
 
 import { checkPinFreshness } from "./corpus.js";
