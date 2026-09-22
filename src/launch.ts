@@ -19,6 +19,10 @@ import { MCP_SERVER_NAME, SHARED_RULES } from "./registry.js";
 import { resolveToken } from "./auth.js";
 import { gatherContext } from "./corpus.js";
 import type { Topic } from "./corpus.js";
+import { runPingcli } from "./pingcli-bridge.js";
+import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
+import { z } from "zod";
+import type { FallbackSpec } from "./pingcli-bridge.js";
 
 export interface LaunchInput {
   intent: string;
@@ -210,8 +214,26 @@ async function launchSpecialistClaude(
   const accessToken = auth.token;
 
   const allTools = await fetchToolCatalog(url, accessToken);
-  const disallowed = computeDenyList(allTools, def.tools);
-  const allowed = def.tools.map((t) => `mcp__${MCP_SERVER_NAME}__${t}`);
+
+  // Dual-source subset: catalog hits → native MCP; catalog misses with a
+  // fallback mapping (e.g. Protect via pingcli) → CLI bridge tools.
+  const inCatalog = new Set(allTools);
+  const missing = def.tools.filter((t) => !inCatalog.has(t));
+  const fallbacks = def.fallback ?? {};
+  const cliBridgeTools = missing.filter((t) => fallbacks[t]);
+  const unresolvable = missing.filter((t) => !fallbacks[t]);
+  if (unresolvable.length) {
+    throw new Error(
+      `Specialist '${def.name}' references tools missing from the catalog with no fallback: ${unresolvable.join(", ")}`,
+    );
+  }
+  const effectiveSubset = def.tools.filter((t) => inCatalog.has(t) || !!fallbacks[t]);
+
+  const disallowed = computeDenyList(allTools, effectiveSubset.filter((t) => inCatalog.has(t)));
+  const allowed = [
+    ...effectiveSubset.filter((t) => inCatalog.has(t)).map((t) => `mcp__${MCP_SERVER_NAME}__${t}`),
+    ...cliBridgeTools,
+  ];
 
   const task = input.followUp ?? input.intent;
   const corpusCtx = (input as LaunchInput & { _corpusContext?: string })._corpusContext ?? "";
@@ -238,6 +260,38 @@ async function launchSpecialistClaude(
         url,
         headers: { Authorization: `Bearer ${accessToken}` },
       },
+      // CLI bridge: fallback tools that shell out to pingcli for domains
+      // the MCP catalog doesn't carry (Protect today).
+      ...(cliBridgeTools.length
+        ? {
+            pingcli: createSdkMcpServer({
+              name: "pingcli",
+              version: "0.1.0",
+              tools: cliBridgeTools.map((name) =>
+                tool(
+                  name,
+                  (fallbacks as FallbackSpec)[name].description,
+                  {
+                    environmentId: z.string().optional().describe("Overrides the injected environment ID"),
+                    body: z.string().optional().describe("Full JSON body for create/replace operations"),
+                    positional: z.array(z.string()).optional().describe("Positional CLI arguments, e.g. the resource ID"),
+                  },
+                  async ({ environmentId, body, positional }) => {
+                    const r = await runPingcli((fallbacks as FallbackSpec)[name].args, {
+                      environmentId: environmentId ?? input.environmentId,
+                      stdinBody: body,
+                      positional,
+                    });
+                    return {
+                      content: [{ type: "text", text: r.text }],
+                      isError: !r.ok,
+                    };
+                  },
+                ),
+              ),
+            }),
+          }
+        : {}),
     },
     allowedTools: allowed,
     disallowedTools: disallowed,

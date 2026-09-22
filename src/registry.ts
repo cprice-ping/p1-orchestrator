@@ -28,6 +28,9 @@ export interface SpecialistDef {
   /** Corpus topics this specialist can act on — the orchestrator gathers
    *  situational context from the doc map for matching intents. */
   topics?: readonly string[];
+  /** Fallback transport for tools the live catalog lacks: MCP tool name →
+   *  pingcli subcommand. The launcher bridges these as CLI-backed tools. */
+  fallback?: Readonly<Record<string, unknown>>;
   /** The specialist's entire system prompt. */
   playbook: string;
 }
