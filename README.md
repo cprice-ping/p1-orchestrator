@@ -153,7 +153,8 @@ Two directories hold them:
 
 ## When does auth happen?
 
-Not at attach, and not at discovery. `list_specialists` reads the local
+We authn at the point we need to, not before. Not at attach, and not at
+discovery: `list_specialists` reads the local
 registry only — no PingOne call, no token, so browsing the menu is free.
 The OAuth browser dance fires at the first call that must reach PingOne
 (`resolve_environment` or `dispatch_specialist`), once, and the token is

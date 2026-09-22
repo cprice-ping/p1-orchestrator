@@ -291,6 +291,12 @@
                                     name clash, 30s TTL reload</pre>
 
   <h2 id="auth">Auth composes — nothing new to invent</h2>
+  <p><strong>Authn at the point we need to, not before.</strong> Nothing
+    happens at attach; the directory is a local read, so discovery is free
+    and leaks nothing. The OAuth dance fires at the first call that must
+    reach PingOne, once — then tokens cache and refresh and the human never
+    sees the browser again until refresh-token expiry. An attached-but-unused
+    orchestrator never prompts.</p>
   <p>The orchestrator is itself a conforming MCP client of the PingOne MCP
     Server, so it runs the <em>same</em> authorization the server already
     supports — the pre-wired <code>pingone-mcp-server</code> client, OIDC
