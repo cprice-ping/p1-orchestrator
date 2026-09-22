@@ -7,20 +7,22 @@
  */
 
 import { launchSpecialist, DEFAULT_P1_MCP_URL } from "./launch.js";
-import { getSpecialist, SPECIALISTS } from "./registry.js";
+import { listAll } from "./registry.js";
 
 const [name, ...rest] = process.argv.slice(2);
 const intent = rest.join(" ");
 
 if (!name || !intent) {
+  const known = (await listAll()).map((s) => s.name);
   console.error(
     `Usage: npm run probe -- <specialist> "<intent>"\n` +
-      `Specialists: ${SPECIALISTS.map((s) => s.name).join(", ")}`,
+      `Specialists: ${known.join(", ")}`,
   );
   process.exit(1);
 }
 
-const def = getSpecialist(name);
+const all = await listAll();
+const def = all.find((s) => s.name === name);
 if (!def) {
   console.error(`Unknown specialist: ${name}`);
   process.exit(1);
