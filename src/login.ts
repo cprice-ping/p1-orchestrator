@@ -4,19 +4,21 @@
  * the human's browser session. Run once per machine; everything else just
  * reads the cache and refreshes.
  *
- * Env: P1_ENVIRONMENT_ID — REQUIRED, your PingOne admin environment UUID
- * (the env whose MCP server URL you attach the orchestrator through).
+ * Env: P1_MCP_URL (preferred — the admin env UUID is parsed from its
+ * /admin/<uuid>/mcp path) or P1_ENVIRONMENT_ID as a fallback.
  */
 
+import { envIdFromMcpUrl } from "./launch.js";
 import { resolveToken } from "./auth.js";
 
-const envId = process.env.P1_ENVIRONMENT_ID;
+const envId =
+  envIdFromMcpUrl(process.env.P1_MCP_URL ?? "") ?? process.env.P1_ENVIRONMENT_ID;
 
 if (!envId) {
   console.error(
-    "Set P1_ENVIRONMENT_ID to your PingOne admin environment UUID first.\n" +
-      "It is the <admin-env-uuid> in your PingOne MCP server URL:\n" +
-      "  https://mcp.pingone.com/admin/<admin-env-uuid>/mcp",
+    "Set P1_MCP_URL to your PingOne MCP server URL first\n" +
+      "(https://mcp.pingone.com/admin/<admin-env-uuid>/mcp — the UUID inside\n" +
+      "it is the OAuth login env). P1_ENVIRONMENT_ID works as a fallback.",
   );
   process.exit(1);
 }

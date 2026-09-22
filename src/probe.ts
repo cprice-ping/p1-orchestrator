@@ -2,11 +2,12 @@
  * probe.ts — run one specialist directly, no MCP layer. For measuring the
  * routed pattern against the flat one and for iterating on playbooks fast.
  *
- * Env: P1_MCP_URL, P1_ACCESS_TOKEN, P1_ENVIRONMENT_ID
+ * Env: P1_MCP_URL (required), P1_ENVIRONMENT_ID (optional — defaults to
+ * the admin env parsed from the URL), P1_ACCESS_TOKEN
  * Args: <specialist-name> <intent...>
  */
 
-import { launchSpecialist } from "./launch.js";
+import { envIdFromMcpUrl, launchSpecialist } from "./launch.js";
 import { listAll } from "./registry.js";
 
 const [name, ...rest] = process.argv.slice(2);
@@ -29,11 +30,12 @@ if (!def) {
 }
 
 const url = process.env.P1_MCP_URL;
-const envId = process.env.P1_ENVIRONMENT_ID;
+const envId =
+  process.env.P1_ENVIRONMENT_ID ?? envIdFromMcpUrl(url ?? "");
 if (!url || !envId) {
   console.error(
-    "Set P1_ENVIRONMENT_ID (task-target env UUID) and P1_MCP_URL\n" +
-      "(https://mcp.pingone.com/admin/<admin-env-uuid>/mcp) first.",
+    "Set P1_MCP_URL=https://mcp.pingone.com/admin/<admin-env-uuid>/mcp first.\n" +
+      "P1_ENVIRONMENT_ID optionally overrides the task env (default: the URL's admin env).",
   );
   process.exit(1);
 }
