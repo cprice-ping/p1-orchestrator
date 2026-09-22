@@ -73,11 +73,34 @@ descriptions are identical data either way:
 The Gemini engine exists as the portability proof: same registry, ~200 lines
 of loop, and the tool subset is *the request itself* (no deny-list needed).
 
+## Adding a specialist — write one JSON file, nothing else
+
+A specialist is a single `*.specialist.json`:
+
+```json
+{
+  "name": "audit_investigator",
+  "description": "One line — the only thing the orchestrator routes on.",
+  "requires": [],
+  "topics": ["audit-activities"],
+  "tools": ["searchAuditActivities", "getAuditActivity"],
+  "playbook": "You are the … (procedure, not vibes)",
+  "fallback": { "listRiskPolicySets": { "args": ["pingone", "protect", "risk-policy-sets", "list"] } }
+}
+```
+
+Two directories hold them:
+
+- **`specialists/` in the repo** — shipped defaults, versioned with the code.
+- **`~/.p1-orchestrator/specialists/`** — your drop-ins; a drop-in overrides a
+  same-name default. Reloaded on a 30s TTL: file appears, next dispatch finds
+  it, no server restart, no client reconnect, no recompile.
+
 ## What's here
 
 | File | Role |
 |---|---|
-| `src/registry.ts` | **The transferable artifact.** Specialists as data: routing one-liner, tool subset, playbook. |
+| `src/registry.ts` | **The transferable artifact.** Loads specialists from JSON: shipped defaults in `specialists/`, plus local drop-ins. |
 | `src/launch.ts` | Engine dispatch + the Claude-engine loop: live catalog fetch, deny-complement filtering, resume. |
 | `src/engines/gemini.ts` | The Gemini-engine loop over the same registry. |
 | `src/engines/mcp-client.ts` | Shared stateful MCP client (initialize / tools/list / tools/call). |
