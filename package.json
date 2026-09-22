@@ -8,6 +8,7 @@
     "login": "tsx src/login.ts",
     "probe": "tsx src/probe.ts",
     "p1-probe": "tsx src/p1-probe.ts",
+    "pin-check": "tsx src/pin-check.ts",
     "server": "node dist/server.js",
     "typecheck": "tsc --noEmit"
   },

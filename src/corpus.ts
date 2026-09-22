@@ -100,6 +100,133 @@ export interface CorpusDoc {
 /** Hard cap on one doc's excerpt entering a specialist prompt. */
 const MAX_EXCERPT_CHARS = 1600;
 
+// ---------------------------------------------------------------------------
+// Dynamic tier: live llms.txt index matching + pin freshness checking.
+// ---------------------------------------------------------------------------
+
+const INDEX_URL = "https://developer.pingidentity.com/pingone-api/llms.txt";
+const INDEX_TTL_MS = 60 * 60 * 1000; // 1h
+let indexCache: { at: number; entries: IndexEntry[] } | null = null;
+
+interface IndexEntry {
+  title: string;
+  url: string;
+  description: string;
+}
+
+async function loadIndex(): Promise<IndexEntry[]> {
+  if (indexCache && Date.now() - indexCache.at < INDEX_TTL_MS) {
+    return indexCache.entries;
+  }
+  const res = await fetch(INDEX_URL, { headers: { Accept: "text/plain" } });
+  if (!res.ok) throw new Error(`llms.txt fetch failed: ${res.status}`);
+  const text = await res.text();
+  const entries: IndexEntry[] = [];
+  for (const line of text.split("\n")) {
+    const m = line.match(/^- \[([^\]]+)\]\((https:\S+\.md)\)(?::\s*(.+))?$/);
+    if (m) entries.push({ title: m[1], url: m[2], description: m[3] ?? "" });
+  }
+  indexCache = { at: Date.now(), entries };
+  return entries;
+}
+
+/** Keyword score of an index entry against the intent. */
+function scoreEntry(e: IndexEntry, words: string[]): number {
+  const hay = `${e.title} ${e.description}`.toLowerCase();
+  let score = 0;
+  for (const w of words) {
+    const hits = hay.split(w).length - 1;
+    if (hits > 0) score += hits * Math.min(w.length / 4, 3);
+  }
+  return score;
+}
+
+/**
+ * Dynamic tier: top-N index entries matching the intent, excluding pins.
+ * Best-effort — the index is a catalog of titles, so keyword scoring over
+ * title+description is the whole trick. Misses are a signal the curated
+ * map needs a pin, not an error.
+ */
+export async function indexMatch(
+  intent: string,
+  topN = 2,
+  excludeUrls: string[] = [],
+): Promise<DocDoc[]> {
+  const words = intent.toLowerCase().split(/[^a-z_:-]+/).filter((w) => w.length > 3);
+  const entries = await loadIndex();
+  const excluded = new Set(excludeUrls);
+  return entries
+    .filter((e) => !excluded.has(e.url))
+    .map((e) => ({ e, s: scoreEntry(e, words) }))
+    .filter(({ s }) => s > 0)
+    .sort((a, b) => b.s - a.s)
+    .slice(0, topN)
+    .map(({ e }) => ({
+      title: e.title,
+      url: e.url,
+      decides: "auto-matched from live docset index (llms.txt)",
+    }));
+}
+
+// ---------------------------------------------------------------------------
+// Pin freshness: do curated pins still resolve, and still appear in the
+// docset index? Run at startup / on a schedule / as a one-shot CLI.
+// ---------------------------------------------------------------------------
+
+export interface PinHealth {
+  url: string;
+  topic: string;
+  title: string;
+  status: "ok" | "drift" | "dead";
+  detail?: string;
+}
+
+export interface PinReport {
+  checkedAt: string;
+  total: number;
+  dead: number;
+  drift: number;
+  pins: PinHealth[];
+}
+
+export async function checkPinFreshness(): Promise<PinReport> {
+  const pins: { topic: string; doc: DocDoc }[] = [];
+  for (const [topic, docs] of Object.entries(DOC_MAP) as [Topic, DocDoc[]][]) {
+    for (const doc of docs) pins.push({ topic, doc });
+  }
+  const index = await loadIndex().catch(() => [] as IndexEntry[]);
+  const knownUrls = new Set(index.map((e) => e.url));
+
+  const results: PinHealth[] = [];
+  for (const { topic, doc } of pins) {
+    try {
+      const res = await fetch(doc.url, { method: "HEAD", headers: { Accept: "text/markdown" } });
+      if (res.status === 404) {
+        results.push({ url: doc.url, topic, title: doc.title, status: "dead", detail: "404 — pin needs re-curation" });
+      } else if (!res.ok) {
+        results.push({ url: doc.url, topic, title: doc.title, status: "drift", detail: `HTTP ${res.status}` });
+      } else {
+        results.push({
+          url: doc.url,
+          topic,
+          title: doc.title,
+          status: knownUrls.size === 0 || knownUrls.has(doc.url) ? "ok" : "drift",
+          detail: knownUrls.size > 0 && !knownUrls.has(doc.url) ? "not in current llms.txt — moved or retitled?" : undefined,
+        });
+      }
+    } catch (err) {
+      results.push({ url: doc.url, topic, title: doc.title, status: "drift", detail: err instanceof Error ? err.message : String(err) });
+    }
+  }
+  return {
+    checkedAt: new Date().toISOString(),
+    total: results.length,
+    dead: results.filter((r) => r.status === "dead").length,
+    drift: results.filter((r) => r.status === "drift").length,
+    pins: results,
+  };
+}
+
 /**
  * Fetch one doc and extract the decision-relevant section.
  * Cheap heuristic distillation: the .md alternates are already
@@ -161,10 +288,31 @@ export async function gatherContext(
   for (const [topic, kws] of Object.entries(TOPIC_KEYWORDS) as [Topic, string[]][]) {
     if (kws.some((k) => low.includes(k))) topics.add(topic);
   }
-  const docs = [...topics]
+  let docs = [...topics]
     .flatMap((t) => DOC_MAP[t] ?? [])
     // dedupe by url
     .filter((d, i, a) => a.findIndex((x) => x.url === d.url) === i);
+
+  // Verify pins resolve; drop dead ones (freshness feedback at call time).
+  const healthy: DocDoc[] = [];
+  for (const d of docs) {
+    try {
+      const probe = await fetch(d.url, { method: "HEAD", headers: { Accept: "text/markdown" } });
+      if (probe.ok) healthy.push(d);
+      else console.error(`[corpus] pin dead (HTTP ${probe.status}), dropped: ${d.title}`);
+    } catch {
+      console.error(`[corpus] pin unreachable, dropped: ${d.title}`);
+    }
+  }
+  docs = healthy;
+
+  // Dynamic tier: fill to a bound from the live llms.txt index.
+  try {
+    const extra = await indexMatch(low, 2, docs.map((d) => d.url));
+    docs = [...docs, ...extra].slice(0, 5);
+  } catch (err) {
+    console.error("[corpus] index match failed (pins only):", err instanceof Error ? err.message : err);
+  }
   if (docs.length === 0) return [];
 
   const results = await Promise.all(

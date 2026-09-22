@@ -388,9 +388,29 @@
       (<code>pingone-mcp-server</code>) — it is what makes layered clients
       possible with zero registration ceremony. Document it.</li>
     <li><strong>Consider shipping the routing metadata</strong> the catalog
-      lacks: machine-readable groupings (which tools belong to which
-      use-case), and task-level hints (scopes live on Resources). The
-      playbooks in this repo are a starting corpus.</li>
+      lacks — two publishable forms, both demonstrated from working code:
+      <ul>
+        <li><strong>A topic map</strong> (task/tool → the 1–3 authoritative
+          doc pages that decide it). We maintain a local workaround today
+          (<code>corpus.ts</code>): ~6 curated pins, live-fetched from
+          Ping's agent-ready <code>.md</code> alternates at call time, with
+          a freshness checker (<code>npm run pin-check</code>) against the
+          <code>llms.txt</code> index and dynamic index-match fallback. It
+          works — but it's hand-curation that duplicates what Ping could
+          publish natively, and specialists shouldn't need to re-derive
+          which pages decide.</li>
+        <li><strong>Per-tool doc bindings</strong> in the MCP catalog — a
+          <code>docs</code> field on each tool description
+          (<code>createApplication</code> → applications-1.md +
+          token-exchange-grant-type.md). One line per tool; closes the loop
+          inside the catalog itself.</li>
+      </ul>
+      <p>The docs corpus itself is already excellent and agent-ready
+        (llms.txt, .md alternates, docs-for-agents guide) — the missing
+        binding is which pages matter for which action. Our consumption
+        code is a working client for exactly that artifact; hand it over
+        and we swap the source.</p>
+    </li>
     <li><strong>A composite-tool escape hatch.</strong> Where a flow turns
       out fully deterministic (this app-creation sequence is close), a single
       composite tool with no LLM in the middle is even cheaper. The server
