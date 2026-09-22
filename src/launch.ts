@@ -17,6 +17,8 @@ import { join } from "node:path";
 import type { SpecialistDef } from "./registry.js";
 import { MCP_SERVER_NAME, SHARED_RULES } from "./registry.js";
 import { resolveToken } from "./auth.js";
+import { gatherContext } from "./corpus.js";
+import type { Topic } from "./corpus.js";
 
 export interface LaunchInput {
   intent: string;
@@ -148,17 +150,51 @@ export function currentEngine(): EngineName {
 /**
  * Engine dispatch. The registry (playbook, subset, description) is identical
  * for both; only loop mechanics differ. Callers stay engine-agnostic.
+ *
+ * Situational context: before dispatch, gather distilled doc context for
+ * the intent (orchestrator = retrieval layer). Both engines receive the
+ * same context block; specialists treat it as facts-to-inform, with the
+ * tool catalog + P1 enforcement as ground truth.
  */
 export async function launchSpecialist(
   input: LaunchInput,
   def: SpecialistDef,
   callbacks?: LaunchCallbacks,
 ): Promise<LaunchOutput> {
+  let corpusContext = "";
+  if (!input.sessionId && def.topics?.length) {
+    try {
+      const docs = await gatherContext(input.intent, def.topics as Topic[]);
+      if (docs.length) {
+        corpusContext = [
+          "",
+          "SITUATIONAL CONTEXT (sourced from Ping's agent-ready doc corpus, developer.pingidentity.com):",
+          "Treat as authoritative guidance for THIS task; if it conflicts with what the tools return, report the conflict rather than forcing an action.",
+          "",
+          ...docs.flatMap((d) => [
+            `## ${d.title}`,
+            `source: ${d.url}`,
+            d.excerpt,
+            "",
+          ]),
+        ].join("\n");
+        callbacks?.onEvent?.({
+          kind: "text",
+          text: `[orchestrator] gathered ${docs.length} doc context(s): ${docs.map((d) => d.title).join(", ")}`,
+        });
+      }
+    } catch (err) {
+      // Corpus is best-effort: never block the specialist on retrieval.
+      console.error("[corpus] gather failed:", err instanceof Error ? err.message : err);
+    }
+  }
+  const inputWithContext = { ...input, _corpusContext: corpusContext } as LaunchInput & { _corpusContext?: string };
+
   if (currentEngine() === "gemini") {
     const { launchSpecialistGemini } = await import("./engines/gemini.js");
-    return launchSpecialistGemini(input, def, callbacks);
+    return launchSpecialistGemini(inputWithContext, def, callbacks);
   }
-  return launchSpecialistClaude(input, def, callbacks);
+  return launchSpecialistClaude(inputWithContext, def, callbacks);
 }
 
 async function launchSpecialistClaude(
@@ -178,7 +214,14 @@ async function launchSpecialistClaude(
   const allowed = def.tools.map((t) => `mcp__${MCP_SERVER_NAME}__${t}`);
 
   const task = input.followUp ?? input.intent;
-  const prompt = [`environmentId: ${input.environmentId}`, "", "Task:", task].join(
+  const corpusCtx = (input as LaunchInput & { _corpusContext?: string })._corpusContext ?? "";
+  const prompt = [
+    `environmentId: ${input.environmentId}`,
+    "",
+    "Task:",
+    task,
+    ...(corpusCtx ? [corpusCtx] : []),
+  ].join(
     "\n",
   );
 

@@ -25,6 +25,9 @@ export interface SpecialistDef {
   /** Optional model override (cheap tier for simple specialists, etc.).
    *  Falls back to P1_SPECIALIST_MODEL, then ANTHROPIC_MODEL (inherit). */
   model?: string;
+  /** Corpus topics this specialist can act on — the orchestrator gathers
+   *  situational context from the doc map for matching intents. */
+  topics?: readonly string[];
   /** The specialist's entire system prompt. */
   playbook: string;
 }
@@ -147,6 +150,7 @@ export const SPECIALISTS: readonly SpecialistDef[] = [
     description:
       "Create, update, verify, or delete PingOne applications (OIDC/SAML/worker) end-to-end: scopes, grants, attribute mappings, CORS, PKCE, enablement.",
     requires: [],
+    topics: ["app-creation", "resource-grants", "worker-apps", "token-exchange"],
     tools: [
       "listApplications",
       "getApplication",

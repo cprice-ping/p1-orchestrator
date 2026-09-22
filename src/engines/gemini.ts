@@ -39,7 +39,7 @@ export interface GeminiLaunchInput {
 /** Names of the two P1 tools the registry expects every specialist to avoid
  *  needing (environmentId arrives resolved); enforced by omission. */
 export async function launchSpecialistGemini(
-  input: { intent: string; environmentId: string; maxTurns?: number },
+  input: { intent: string; environmentId: string; maxTurns?: number; _corpusContext?: string },
   def: SpecialistDef,
   callbacks?: LaunchCallbacks,
 ): Promise<LaunchOutput> {
@@ -81,7 +81,7 @@ export async function launchSpecialistGemini(
   ].join("\n");
 
   const contents: { role: "user" | "model"; parts: unknown[] }[] = [
-    { role: "user", parts: [{ text: `Task:\n${input.intent}` }] },
+    { role: "user", parts: [{ text: `Task:\n${input.intent}${input._corpusContext ? "\n" + input._corpusContext : ""}` }] },
   ];
 
   const toolCalls: string[] = [];
