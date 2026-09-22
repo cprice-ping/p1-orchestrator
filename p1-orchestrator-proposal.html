@@ -539,6 +539,14 @@
   </ul>
 
   <h2 id="deploy">Local is the demo; hosting is Product's call</h2>
+  <p>The install story is the composition story: <strong>attach one server,
+    nothing else.</strong> The orchestrator is itself an MCP client of both
+    services — the PingOne MCP Server (tools, authenticated) and the Docs
+    MCP service (knowledge, auth-free) — and composes them at dispatch:
+    the specialist's doc context arrives distilled in its prompt, so no
+    specialist ever runs retrieval, and the client never attaches either
+    upstream service. One <code>claude mcp add</code>, three fixed tools,
+    two composed services.</p>
   <p>This reference implementation ships as a <strong>local stdio MCP
     server</strong> for one admin — deliberately. Hosting was explored and
     the finding matters: a hosted orchestrator that serves one environment

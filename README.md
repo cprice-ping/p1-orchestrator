@@ -21,10 +21,21 @@ Claude Code (or any MCP client)
     │  sees 3 fixed tools — directory + dispatch + env lookup, never 78 schemas
     ▼
 p1-orchestrator  (this repo: one local MCP server)
-    │  per call: spawn loop → playbook + tool subset → compact report
+    │  per dispatch: gather doc context → specialist loop (playbook + subset) → report
     ▼
 PingOne MCP Server  (unchanged, raw tool supply)
+    +
+P1 Docs MCP service  (docs.pingidentity.com/mcp — knowledge supply)
 ```
+
+**One install, nothing else to attach.** The orchestrator composes both
+services itself as MCP clients: the PingOne MCP Server for raw tool supply,
+the PingOne Docs MCP service for knowledge supply. At dispatch it gathers
+the specialist's domain docs (curated pins first, agent-fronted semantic
+retrieval second — auth-free) and hands the loop a bounded, sourced excerpt.
+Specialists never run doc retrieval themselves; their context arrives
+distilled. If the docs service is unreachable, dispatch degrades to the
+curated pins, then to playbook-only.
 
 **Demo scope, on purpose:** this runs as a *local* MCP server for one admin.
 The auth and tool execution are bounded by PingOne itself (admin permissions,
@@ -41,6 +52,9 @@ deny-gate) is sketched in `p1-orchestrator-proposal.html`.
   orchestrator authenticates through — nothing to create). An admin person
   in that environment signs in once, in the browser, during setup.
 - **Node 22+** and npm.
+- **Nothing else.** The Docs MCP service (docs.pingidentity.com/mcp) needs
+  no install, no attach, and no auth — the orchestrator reaches it itself
+  for specialist doc context, and degrades gracefully if it's unreachable.
 - *(Optional)* `pingcli` — only needed for the pingcli-bridge fallback:
   specialists whose domains the P1 MCP catalog doesn't carry yet (Protect,
   MFA today) fall back to `pingcli` commands with a profile holding a
