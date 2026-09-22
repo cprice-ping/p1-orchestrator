@@ -232,7 +232,19 @@
   </div>
 
   <h2 id="pattern">The pattern</h2>
-  <p>Three layers, each doing one job:</p>
+  <p>Each layer does one job, and each job's failure mode is contained by
+    the layer below it:</p>
+  <div class="callout">
+    <p><strong>Client's model</strong> — route, don't execute. <i>(directory
+      one-liners, never tool schemas)</i><br>
+      <strong>Orchestrator</strong> — equip, don't loop. <i>(assemble
+      everything; launch once)</i><br>
+      <strong>Specialist</strong> — execute, don't search. <i>(pre-armed;
+      spend the loop on the task)</i><br>
+      <strong>PingOne</strong> — enforce, always. <i>(narrowing, never
+      bypass)</i></p>
+  </div>
+  <p>Concretely, at dispatch:</p>
   <div class="diagram"><b>Client</b> (Claude Code · IDE · any MCP client)
   │  sees 3 fixed tools — directory + dispatch + env lookup, never the 78 schemas
   ▼
