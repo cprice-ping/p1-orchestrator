@@ -33,7 +33,8 @@ export type Topic =
   | "passwordless"
   | "protect-policy-sets"
   | "protect-predictors"
-  | "audit-activities";
+  | "audit-activities"
+  | "environment-management";
 
 export const DOC_MAP: Partial<Record<Topic, DocDoc[]>> = {
   "token-exchange": [
@@ -152,6 +153,20 @@ export const DOC_MAP: Partial<Record<Topic, DocDoc[]>> = {
         "the audit trail API: SCIM filters (recordedAt range, actors.user.id, actors.client.id, action.type, resources.id/type, correlationid), the adminIdentityEvent tag, and the activity JSON shape (actors{client,user}, action.type, resources[], result.status)",
     },
   ],
+  "environment-management": [
+    {
+      title: "Create Environment",
+      url: "https://developer.pingidentity.com/pingone-api/platform/environments/create-environment.md",
+      decides:
+        "environment creation: required name/region/license, billOfMaterials at creation, sandbox-vs-production creation boundary",
+    },
+    {
+      title: "Update Environment",
+      url: "https://developer.pingidentity.com/pingone-api/platform/environments/update-environment.md",
+      decides:
+        "service (Bill of Materials) changes are REPLACE semantics — omitted services are removed; region immutable; complete-set resend pattern",
+    },
+  ],
 };
 
 export interface DocDoc {
@@ -172,6 +187,7 @@ export const TOPIC_KEYWORDS: Partial<Record<Topic, string[]>> = {
   "protect-policy-sets": ["risk policy", "policy set", "mitigations", "targeted policy"],
   "protect-predictors": ["predictor", "risk level", "velocity", "bot detection", "anonymous network"],
   "audit-activities": ["audit", "activity", "activities", "who did", "what changed", "trail", "compliance", "history", "changed"],
+  "environment-management": ["environment", "environments", "provision", "provisioning", "new env", "sandbox", "bill of materials", "license", "region", "tenant setup"],
 };
 
 export interface CorpusDoc {
