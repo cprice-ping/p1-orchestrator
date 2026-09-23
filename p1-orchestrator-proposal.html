@@ -699,6 +699,22 @@
 
   <h2 id="limits">Honest limits</h2>
   <ul>
+    <li><strong>The boundaries are dispatch-scoped.</strong> The gates
+      (fail-closed tool set, delete opt-in, run logs) govern the
+      orchestrator's surface — the agent path. The hierarchy that must hold
+      is <em>human ≥ gated agent path ≥ every other agent</em>: the human
+      admin stays bounded only by PingOne (nobody escapes that, by design),
+      the specialists are bounded by the gates — but in this local demo, the
+      operator's other in-session agents hold the person token directly and
+      sit at the human's power level with none of the specialist's
+      constraints. The pattern's answer is a deployment rule, not code:
+      <strong>the orchestrator is the agent's only P1 surface</strong> — the
+      server holds the tokens so no model ever touches one. Hosted, that's
+      automatic (per-user token stores, ingress auth — the graduation
+      checklist below); locally, it is a stated caveat. A capability kept
+      off the agent path (environment deletion, production creation —
+      Ping's own catalog boundary) cannot be re-added "so it can be
+      gated"; that would be manufacturing power to then fence it.</li>
     <li><strong>One extra LLM hop per dispatch.</strong> Trivial single-call
       tasks lose; multi-step workflows win. The probe data here covers the
       multi-step cases — where the win is real.</li>
