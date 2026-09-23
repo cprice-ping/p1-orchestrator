@@ -15,7 +15,7 @@ import { appendFile, mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { SpecialistDef } from "./registry.js";
-import { MCP_SERVER_NAME, SHARED_RULES } from "./registry.js";
+import { MCP_SERVER_NAME, SHARED_RULES, isDestructiveTool } from "./registry.js";
 import { resolveToken } from "./auth.js";
 import { gatherContext } from "./corpus.js";
 import type { Topic } from "./corpus.js";
@@ -31,6 +31,8 @@ export interface LaunchInput {
   followUp?: string;
   sessionId?: string;
   maxTurns?: number;
+  /** Caller opt-in for delete* tools. Off by default: the gate denies them. */
+  allowDestructive?: boolean;
 }
 
 /** Streaming progress events, for live visibility into a running specialist. */
@@ -230,10 +232,10 @@ async function launchSpecialistClaude(
   const effectiveSubset = def.tools.filter((t) => inCatalog.has(t) || !!fallbacks[t]);
 
   const disallowed = computeDenyList(allTools, effectiveSubset.filter((t) => inCatalog.has(t)));
-  const allowed = [
+  const allowed = new Set([
     ...effectiveSubset.filter((t) => inCatalog.has(t)).map((t) => `mcp__${MCP_SERVER_NAME}__${t}`),
-    ...cliBridgeTools,
-  ];
+    ...cliBridgeTools.map((t) => `mcp__pingcli__${t}`),
+  ]);
 
   const task = input.followUp ?? input.intent;
   const corpusCtx = (input as LaunchInput & { _corpusContext?: string })._corpusContext ?? "";
@@ -293,11 +295,28 @@ async function launchSpecialistClaude(
           }
         : {}),
     },
-    allowedTools: allowed,
+    // No built-in tools (Bash, Read, Write, WebFetch…): the specialist's
+    // only capabilities are the MCP subset below.
+    tools: [],
     disallowedTools: disallowed,
-    // Headless, nobody to prompt; the subset itself is the guardrail.
-    permissionMode: "bypassPermissions",
-    allowDangerouslySkipPermissions: true,
+    // Headless, nobody to prompt: every tool call goes through this gate.
+    // Only the specialist's subset may run, and delete* only when the
+    // caller dispatched with allowDestructive. Fail-closed.
+    permissionMode: "default",
+    canUseTool: async (toolName: string, toolInput: Record<string, unknown>) => {
+      if (!allowed.has(toolName)) {
+        return { behavior: "deny", message: `${toolName} is outside this specialist's tool set.` };
+      }
+      if (isDestructiveTool(toolName) && !input.allowDestructive) {
+        return {
+          behavior: "deny",
+          message:
+            `${toolName} is destructive and this dispatch did not set allowDestructive. ` +
+            "Do not retry or work around this; report what you would delete so the caller can re-dispatch with allowDestructive.",
+        };
+      }
+      return { behavior: "allow", updatedInput: toolInput };
+    },
   };
 
   if (input.sessionId) {

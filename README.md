@@ -162,6 +162,16 @@ then cached and refreshed. An attached-but-unused orchestrator never
 prompts; a directory listing leaks nothing (the one-liners are static
 declarations with nothing tenant-specific in them).
 
+## Guardrails
+
+A specialist can call only its declared tool subset: no built-in tools
+(no shell, no file access), and every tool call goes through one
+fail-closed permission gate. Delete operations are refused unless the
+dispatch sets `allowDestructive: true`. Without it, the specialist reports
+what it would delete, so the caller can re-dispatch deliberately. The
+Gemini engine enforces the same gate. For `npm run probe`, opt in with
+`P1_ALLOW_DESTRUCTIVE=1`.
+
 ## Visibility
 
 Every specialist run emits three lenses: live MCP progress events (tool calls

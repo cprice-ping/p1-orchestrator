@@ -45,14 +45,28 @@ Operating constraints (from the PingOne MCP server — apply always):
   requires discovering environments.
 - Pass user-supplied content (flow JSON, exports) verbatim — never modify,
   summarise, or reconstruct it.
-- Prefer the narrowest read call first, then write. Confirm before any
-  delete or disable; if a destructive op is not clearly required, report
-  instead of acting.
+- Prefer the narrowest read call first, then write. Delete operations are
+  gated by the orchestrator: they run only when the caller dispatched with
+  allowDestructive. If a delete is refused, do not work around it — report
+  exactly what you would delete (IDs, names) so the caller can re-dispatch.
+  If a destructive op is not clearly required, report instead of acting.
 - If the task needs a tool outside your set, STOP and report exactly what
   is missing rather than improvising.
 - Finish with a compact summary: what you did, IDs created/changed, anything
   the caller must verify by hand.
 `.trim();
+
+/**
+ * Destructive-op gate: a tool is destructive when its bare name starts with
+ * delete/remove. Accepts bare (`deleteUser`) or qualified
+ * (`mcp__pingone__deleteUser`) names. Both engines enforce this in code —
+ * the SHARED_RULES text only tells the model what to expect.
+ */
+export function isDestructiveTool(name: string): boolean {
+  const sep = name.lastIndexOf("__");
+  const bare = sep === -1 ? name : name.slice(sep + 2);
+  return /^(delete|remove)/.test(bare);
+}
 
 import { readdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";

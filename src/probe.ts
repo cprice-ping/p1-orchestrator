@@ -3,7 +3,8 @@
  * routed pattern against the flat one and for iterating on playbooks fast.
  *
  * Env: P1_MCP_URL (required), P1_ENVIRONMENT_ID (optional — defaults to
- * the admin env parsed from the URL), P1_ACCESS_TOKEN
+ * the admin env parsed from the URL), P1_ACCESS_TOKEN, P1_ALLOW_DESTRUCTIVE=1
+ * (opt in to delete* tools, like dispatch_specialist's allowDestructive)
  * Args: <specialist-name> <intent...>
  */
 
@@ -44,7 +45,7 @@ const t0 = Date.now();
 const engine = (process.env.SPECIALIST_ENGINE ?? "claude").toLowerCase();
 console.error(`  engine: ${engine}${process.env.P1_SPECIALIST_MODEL ? ` (${process.env.P1_SPECIALIST_MODEL})` : ""}`);
 const out = await launchSpecialist(
-  { intent, environmentId: envId },
+  { intent, environmentId: envId, allowDestructive: process.env.P1_ALLOW_DESTRUCTIVE === "1" },
   def,
   {
     onEvent: (e) => {
