@@ -50,13 +50,14 @@ export class McpToolClient {
       const m = body.match(/data: (.+)/);
       if (m) jsonText = m[1];
     }
+    let j: { result?: unknown; error?: unknown };
     try {
-      const j = JSON.parse(jsonText);
-      if (j.error) throw new Error(`MCP ${method} error: ${JSON.stringify(j.error).slice(0, 300)}`);
-      return j.result;
+      j = JSON.parse(jsonText);
     } catch {
       throw new Error(`MCP ${method}: unparseable response: ${jsonText.slice(0, 300)}`);
     }
+    if (j.error) throw new Error(`MCP ${method} error: ${JSON.stringify(j.error).slice(0, 300)}`);
+    return j.result;
   }
 
   async init(): Promise<void> {

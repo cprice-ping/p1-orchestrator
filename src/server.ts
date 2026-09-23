@@ -1,13 +1,12 @@
 /**
  * server.ts — the Orchestrator MCP server ("Shape B").
  *
- * Exposes one tool per specialist plus a discovery tool. Every tool call:
- *   1. validates args (typed boundary),
- *   2. launches a specialist agent loop (fresh or resumed),
- *   3. returns the specialist's compact report.
+ * Exposes a fixed three-tool surface: list_specialists (directory),
+ * dispatch_specialist (launch a specialist loop, fresh or resumed, and
+ * return its compact report), and resolve_environment (env lookup).
  *
- * The orchestrator model never sees raw P1 tools; it sees 3 one-liners.
- * Auth: P1 access token from P1_ACCESS_TOKEN env (see README).
+ * The orchestrator model never sees raw P1 tools.
+ * Auth: P1_ACCESS_TOKEN env, else the cached/browser OAuth flow (auth.ts).
  */
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -70,6 +69,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "string",
               description:
                 "Optional: the PingOne environment to act on (UUID). Omit to use the deployment default (P1_ENVIRONMENT_ID, else the admin env from P1_MCP_URL). The caller's PingOne permissions decide what is actually reachable — specialists act on whichever env the intent names.",
+            },
+            allowDestructive: {
+              type: "boolean",
+              description:
+                "Optional, default false: permit delete operations for this dispatch. Set it only when the user explicitly asked for something to be deleted. Without it, the specialist reports what it would delete instead of deleting.",
             },
           },
           required: ["specialist", "intent"],
@@ -247,11 +251,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     const sessionIdArg =
       typeof args?.sessionId === "string" ? args.sessionId : undefined;
+    const allowDestructive = args?.allowDestructive === true;
+
+    // Progress notifications must carry the token the client sent in
+    // _meta.progressToken; a client that sent none gets no notifications.
+    // `progress` must increase with every notification.
+    const progressToken = request.params._meta?.progressToken;
+    let progress = 0;
 
     // Live visibility: emit MCP progress notifications as the specialist
     // works (tool calls + narration), so clients that support progress
     // show what's happening in real time.
     const onEvent = (e: SpecialistEvent) => {
+      if (progressToken === undefined) return;
       let line: string;
       switch (e.kind) {
         case "init":
@@ -273,9 +285,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         .notification({
           method: "notifications/progress",
           params: {
-            progressToken: `${def.name}-${Date.now()}`,
-            progress: 0,
-            total: 1,
+            progressToken,
+            progress: ++progress,
             message: line,
           },
         })
@@ -283,7 +294,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     };
 
     const out = await launchSpecialist(
-      { intent, environmentId: envId, sessionId: sessionIdArg },
+      { intent, environmentId: envId, sessionId: sessionIdArg, allowDestructive },
       def,
       { onEvent },
     );

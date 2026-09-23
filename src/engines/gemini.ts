@@ -18,7 +18,7 @@
 
 import { GoogleGenAI } from "@google/genai";
 import type { SpecialistDef } from "../registry.js";
-import { SHARED_RULES } from "../registry.js";
+import { SHARED_RULES, isDestructiveTool } from "../registry.js";
 import {
   fetchToolCatalog,
   DEFAULT_P1_MCP_URL,
@@ -39,7 +39,7 @@ export interface GeminiLaunchInput {
 /** Names of the two P1 tools the registry expects every specialist to avoid
  *  needing (environmentId arrives resolved); enforced by omission. */
 export async function launchSpecialistGemini(
-  input: { intent: string; environmentId: string; maxTurns?: number; _corpusContext?: string },
+  input: { intent: string; environmentId: string; maxTurns?: number; allowDestructive?: boolean; _corpusContext?: string },
   def: SpecialistDef,
   callbacks?: LaunchCallbacks,
 ): Promise<LaunchOutput> {
@@ -129,6 +129,15 @@ export async function launchSpecialistGemini(
 
       let result: ToolCallPayload;
       try {
+        if (!def.tools.includes(name)) {
+          throw new Error(`${name} is outside this specialist's tool set.`);
+        }
+        if (isDestructiveTool(name) && !input.allowDestructive) {
+          throw new Error(
+            `${name} is destructive and this dispatch did not set allowDestructive. ` +
+              "Do not retry or work around this; report what you would delete so the caller can re-dispatch with allowDestructive.",
+          );
+        }
         result = await client.callTool(name, args);
       } catch (err) {
         result = {

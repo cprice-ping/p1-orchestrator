@@ -12,7 +12,8 @@
  *
  * Token source precedence:
  *   1. P1_ACCESS_TOKEN env       (CI/headless one-shots)
- *   2. cached OAuth tokens       (~/.p1-orchestrator/tokens.json, refresh on expiry)
+ *   2. cached OAuth tokens       (~/.p1-orchestrator/tokens.json, keyed by
+ *                                 login env, refresh on expiry)
  *   3. fresh browser flow        (opens the admin's browser, once)
  *
  * A cached refresh token means the human sees the browser at most once per
@@ -61,8 +62,14 @@ interface CallbackResult {
   error?: string;
 }
 
-/** Spin a one-shot HTTP server; resolve with the auth code or error. */
-function waitForCallback(port: number): Promise<CallbackResult> {
+function escapeHtml(v: string): string {
+  return v.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+}
+
+/** Spin a one-shot HTTP server on /callback; resolve with the auth code or
+ *  error. The `state` must round-trip unchanged (CSRF protection); requests
+ *  to any other path (favicon etc.) get a 404 and leave the server up. */
+function waitForCallback(port: number, expectedState: string): Promise<CallbackResult> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(
       () => {
@@ -73,21 +80,38 @@ function waitForCallback(port: number): Promise<CallbackResult> {
     );
 
     const srv = createServer((req, res) => {
+      // No keep-alive: a lingering socket would route a later login's
+      // callback to this (finished) server.
+      res.setHeader("Connection", "close");
       const url = new URL(req.url ?? "/", "http://localhost");
-      const done = (html: string, status: number) => {
+      if (url.pathname !== "/callback") {
+        res.writeHead(404).end();
+        return;
+      }
+      const done = (html: string, status: number, result: CallbackResult) => {
         res.writeHead(status, { "Content-Type": "text/html" });
         res.end(html);
         clearTimeout(timer);
         srv.close();
+        resolve(result);
       };
 
+      if (url.searchParams.get("state") !== expectedState) {
+        done(
+          "<html><body><h3>Auth failed</h3><p>State mismatch — this callback was not started by this login. Retry from the terminal.</p></body></html>",
+          400,
+          { error: "state_mismatch" },
+        );
+        return;
+      }
       const error = url.searchParams.get("error");
       if (error) {
+        const description = url.searchParams.get("error_description") ?? "";
         done(
-          `<html><body><h3>Auth failed</h3><p>${error}: ${url.searchParams.get("error_description") ?? ""}</p></body></html>`,
+          `<html><body><h3>Auth failed</h3><p>${escapeHtml(error)}: ${escapeHtml(description)}</p></body></html>`,
           400,
+          { error: description ? `${error}: ${description}` : error },
         );
-        resolve({ error, error_description: url.searchParams.get("error_description") ?? "" } as CallbackResult);
         return;
       }
       const code = url.searchParams.get("code");
@@ -95,11 +119,13 @@ function waitForCallback(port: number): Promise<CallbackResult> {
         done(
           "<html><body><h3>Authorized.</h3><p>You can close this tab and return to the terminal.</p></body></html>",
           200,
+          { code },
         );
-        resolve({ code });
         return;
       }
-      done("<html><body>Waiting for authorization...</body></html>", 200);
+      done("<html><body><h3>Auth failed</h3><p>No authorization code in callback.</p></body></html>", 400, {
+        error: "no code in callback",
+      });
     });
 
     srv.on("error", (err) => {
@@ -112,22 +138,38 @@ function waitForCallback(port: number): Promise<CallbackResult> {
 
 // --- token cache ------------------------------------------------------------
 
-async function loadCache(): Promise<TokenSet | undefined> {
+/** Cache file shape: login env id → token set. Keyed so that switching
+ *  P1_MCP_URL to another tenant never reuses (or refreshes against) the
+ *  wrong env's tokens. A legacy single-token file simply misses. */
+type TokenCacheFile = Record<string, TokenSet>;
+
+async function readCacheFile(): Promise<TokenCacheFile> {
   try {
-    const raw = await readFile(TOKEN_CACHE, "utf8");
-    const t = JSON.parse(raw) as TokenSet;
-    if (typeof t.access_token === "string" && typeof t.expires_at === "number") {
-      return t;
-    }
+    const parsed = JSON.parse(await readFile(TOKEN_CACHE, "utf8")) as unknown;
+    if (parsed && typeof parsed === "object") return parsed as TokenCacheFile;
   } catch {
     /* no cache or unreadable — fall through to fresh flow */
+  }
+  return {};
+}
+
+async function loadCache(envId: string): Promise<TokenSet | undefined> {
+  const t = (await readCacheFile())[envId];
+  if (t && typeof t.access_token === "string" && typeof t.expires_at === "number") {
+    return t;
   }
   return undefined;
 }
 
-async function saveCache(t: TokenSet): Promise<void> {
+async function saveCache(envId: string, t: TokenSet): Promise<void> {
+  const all = await readCacheFile();
+  // Drop anything that isn't an env-keyed token set (e.g. the legacy flat file).
+  for (const k of Object.keys(all)) {
+    if (typeof all[k]?.access_token !== "string") delete all[k];
+  }
+  all[envId] = t;
   await mkdir(join(TOKEN_CACHE, ".."), { recursive: true });
-  await writeFile(TOKEN_CACHE, JSON.stringify(t, null, 2), { mode: 0o600 });
+  await writeFile(TOKEN_CACHE, JSON.stringify(all, null, 2), { mode: 0o600 });
   await chmod(TOKEN_CACHE, 0o600);
 }
 
@@ -142,12 +184,23 @@ export async function clearTokenCache(): Promise<void> {
 // --- the dance ---------------------------------------------------------------
 
 function openBrowser(url: string): void {
+  // Always print the URL: headless hosts, missing openers, or a browser on
+  // another machine (which must still reach the localhost callback).
+  console.error("Open this URL to authorize:\n", url);
+  const [cmd, args] =
+    process.platform === "darwin"
+      ? ["open", [url]]
+      : process.platform === "win32"
+        ? ["cmd", ["/c", "start", "", url]]
+        : ["xdg-open", [url]];
   try {
-    spawn("open", [url], { stdio: "ignore", detached: true }).unref();
+    const child = spawn(cmd, args, { stdio: "ignore", detached: true });
+    // A missing opener surfaces as an async 'error' event, not a throw;
+    // without this listener it would crash the server.
+    child.on("error", () => {});
+    child.unref();
   } catch {
-    // Headless or no `open`: the URL is printed to stderr below; the admin
-    // can open it on any machine that can reach the callback host.
-    console.error("Open this URL to authorize:\n", url);
+    /* URL already printed */
   }
 }
 
@@ -215,15 +268,27 @@ export interface TokenSourceResult {
  */
 export async function resolveToken(
   envId: string,
-  mcpUrl: string,
+  _mcpUrl: string,
 ): Promise<TokenSourceResult> {
   // 1. explicit env token — CI / headless one-shots
   if (process.env.P1_ACCESS_TOKEN) {
     return { token: process.env.P1_ACCESS_TOKEN, via: "env" };
   }
+  // Concurrent dispatches share one in-flight resolution per env, so two
+  // cold calls never race for the callback port or rotate the refresh token
+  // out from under each other.
+  const pending = inFlight.get(envId);
+  if (pending) return pending;
+  const p = resolveFromCacheOrLogin(envId).finally(() => inFlight.delete(envId));
+  inFlight.set(envId, p);
+  return p;
+}
 
+const inFlight = new Map<string, Promise<TokenSourceResult>>();
+
+async function resolveFromCacheOrLogin(envId: string): Promise<TokenSourceResult> {
   // 2. cached token (still valid?)
-  const cached = await loadCache();
+  const cached = await loadCache(envId);
   if (cached && cached.expires_at > Date.now() + 60_000) {
     return { token: cached.access_token, via: "cache" };
   }
@@ -232,7 +297,7 @@ export async function resolveToken(
   if (cached?.refresh_token) {
     try {
       const fresh = await refreshToken(envId, cached.refresh_token);
-      await saveCache(fresh);
+      await saveCache(envId, fresh);
       return { token: fresh.access_token, via: "refresh" };
     } catch (err) {
       console.error(
@@ -262,11 +327,11 @@ export async function resolveToken(
   );
   openBrowser(authUrl.toString());
 
-  const cb = await waitForCallback(REDIRECT_PORT);
+  const cb = await waitForCallback(REDIRECT_PORT, state);
   if (cb.error || !cb.code) {
     throw new Error(`OAuth failed: ${cb.error ?? "no code in callback"}`);
   }
   const tokens = await exchangeCode(envId, cb.code, verifier, redirectUri);
-  await saveCache(tokens);
+  await saveCache(envId, tokens);
   return { token: tokens.access_token, via: "browser" };
 }
