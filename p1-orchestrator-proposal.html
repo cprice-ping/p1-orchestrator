@@ -337,6 +337,38 @@
     <strong>What the platform saw:</strong> a scoped, named human identity
     making conventional API calls.</p>
 
+  <h3>Hardened by review, before anyone else touched it</h3>
+  <p>Before the pattern was shared beyond its author, an independent code
+    review tore through it — and the findings proved the pattern's central
+    security claim needed to move from promise to proof. The trust chain
+    says "the layer adds narrowing, never bypass"; the review found the
+    narrowing was <em>configured</em>, not <em>enforced</em> — a
+    specialist's tool list auto-approved its subset but did not forbid the
+    rest, leaving built-in tools (including file access) reachable. Three
+    enforcement mechanisms shipped in response, and all are code, not
+    prompts:</p>
+  <ul>
+    <li><strong>Fail-closed tool gate.</strong> A specialist runs with no
+      built-in tools at all; every call passes one gate that refuses
+      anything outside the declared subset. An unequipped specialist cannot
+      exceed its capability — the "equip, don't loop" boundary is enforced
+      where it can't be talked around.</li>
+    <li><strong>Delete opt-in, per dispatch.</strong> Destructive tools run
+      only when the caller explicitly dispatches with
+      <code>allowDestructive</code>; refused deletes report what
+      <em>would</em> have been deleted. The proposal's own position —
+      destructive-op enforcement belongs in infrastructure, not in
+      prompts — is now shipped behavior, enforced in both engines.</li>
+    <li><strong>Hardened OAuth.</strong> Callback state round-trip (CSRF),
+      HTML-escaped error pages, per-environment token caches, and
+      concurrent-login coalescing: the auth leg survived the same scrutiny
+      as the tool path.</li>
+  </ul>
+  <p>All verified live against the working tenant after the merge. The
+    takeaway for the product team is the one this proposal keeps making:
+    the layer narrows, PingOne enforces — and now the narrowing itself is
+    fail-closed code that an adversarial review could not talk past.</p>
+
   <h3>Visibility, by design</h3>
   <p>Specialists are not black boxes. Every run emits all three lenses:</p>
   <ul>
@@ -683,7 +715,10 @@
       be weighed differently across runs (one A/B still reasoned worker-first
       and self-recovered). Curation reduces the surface for this; it cannot
       eliminate it — which is why destructive-op enforcement belongs in
-      infrastructure, not in prompts.</li>
+      infrastructure, not in prompts. It now is: deletes run only behind
+      the <code>allowDestructive</code> opt-in, enforced in code by the
+      tool gate (see "Hardened by review" above).</li>
+  </ul>
   </ul>
 
   <footer>
