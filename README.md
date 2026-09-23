@@ -71,18 +71,15 @@ dispatch (explicit `environmentId`, else the URL's admin env).
 ```bash
 npm install
 
-# 1. One-time browser login (pre-wired pingone-mcp-server client,
-#    OIDC code + PKCE — the same auth the P1 MCP Server performs).
-#    Token is cached at ~/.p1-orchestrator/tokens.json and refreshed.
-P1_MCP_URL=https://mcp.pingone.com/admin/<admin-env-uuid>/mcp npm run login
-
-# 2. Drive one specialist directly (no MCP layer) — the fast dev loop:
+# 1. Drive one specialist directly (no MCP layer) — the fast dev loop.
+#    First run opens the browser once (OIDC code + PKCE, the same auth
+#    the P1 MCP Server performs): tokens live in the process, nowhere else.
 P1_MCP_URL=https://mcp.pingone.com/admin/<admin-env-uuid>/mcp \
 npm run probe -- app_onboarding \
   "Create an OIDC web app named demo-app with scopes openid profile email,
    PKCE enforced, redirect http://localhost:3000/callback, enabled"
 
-# 3. Attach the orchestrator to Claude Code:
+# 2. Attach the orchestrator to Claude Code:
 npm run build
 P1_MCP_URL=https://mcp.pingone.com/admin/<admin-env-uuid>/mcp \
 claude mcp add p1-orchestrator \
@@ -146,9 +143,9 @@ Two directories hold them:
 | `src/launch.ts` | Engine dispatch + the Claude-engine loop: live catalog fetch, deny-complement filtering, resume. |
 | `src/engines/gemini.ts` | The Gemini-engine loop over the same registry. |
 | `src/engines/mcp-client.ts` | Shared stateful MCP client (initialize / tools/list / tools/call). |
-| `src/auth.ts` | P1 OAuth: pre-wired client, browser once, cached + refreshed. |
+| `src/auth.ts` | P1 OAuth: pre-wired client, browser dance per session, tokens in process memory only. |
 | `src/server.ts` | The orchestrator MCP server (progress notifications, run-log paths). |
-| `src/login.ts` · `src/probe.ts` · `src/p1-probe.ts` | One-time login · direct specialist runner · raw connectivity probe. |
+| `src/probe.ts` · `src/p1-probe.ts` | Direct specialist runner (the fast dev loop) · raw connectivity probe. |
 | `p1-orchestrator-proposal.html` | The product-team writeup: problem, pattern, live-tenant evidence, asks. |
 
 ## When does auth happen?
@@ -157,10 +154,18 @@ We authn at the point we need to, not before. Not at attach, and not at
 discovery: `list_specialists` reads the local
 registry only — no PingOne call, no token, so browsing the menu is free.
 The OAuth browser dance fires at the first call that must reach PingOne
-(`resolve_environment` or `dispatch_specialist`), once, and the token is
-then cached and refreshed. An attached-but-unused orchestrator never
-prompts; a directory listing leaks nothing (the one-liners are static
-declarations with nothing tenant-specific in them).
+(`resolve_environment` or `dispatch_specialist`), once. **Tokens live in
+the orchestrator server's memory — no token file exists.** That is the
+boundary made structural: the orchestrator is the agent's only P1 surface,
+the server holds the tokens, and no model (or other local process) can
+read one. The cost is one browser dance per session (tokens die with the
+server) — which doubles as consent: any agent seeking direct P1 access
+needs a human to complete a login. Practical note: make the *first*
+dispatch of a session something small — the browser dance happens inside
+it, and an MCP client's 60s call timeout will expire if the human doesn't
+finish the sign-in in that window. A directory listing leaks nothing
+(the one-liners are static declarations with nothing tenant-specific in
+them).
 
 ## Guardrails
 

@@ -12,20 +12,17 @@
  *
  * Token source precedence:
  *   1. P1_ACCESS_TOKEN env       (CI/headless one-shots)
- *   2. cached OAuth tokens       (~/.p1-orchestrator/tokens.json, keyed by
- *                                 login env, refresh on expiry)
+ *   2. in-process token memory   (this process only, keyed by login env,
+ *                                 refresh on expiry — NO token file exists)
  *   3. fresh browser flow        (opens the admin's browser, once)
  *
- * A cached refresh token means the human sees the browser at most once per
- * refresh-token lifetime — identical UX to attaching the P1 server to
- * Claude Code directly.
+ * Tokens die with this process: each session's first dispatch does the
+ * browser dance once, which doubles as structural consent — the human
+ * must complete a login before any agent gains direct P1 access.
  */
 
 import { createHash, randomBytes } from "node:crypto";
 import { createServer } from "node:http";
-import { readFile, writeFile, mkdir, chmod, unlink } from "node:fs/promises";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { spawn } from "node:child_process";
 
 export interface TokenSet {
@@ -38,7 +35,6 @@ export interface TokenSet {
 const CLIENT_ID = "pingone-mcp-server";
 const REDIRECT_PORT = 7474;
 const SCOPES = "openid profile offline_access";
-const TOKEN_CACHE = join(homedir(), ".p1-orchestrator", "tokens.json");
 const CALLBACK_TIMEOUT_MS = 5 * 60 * 1000;
 
 function asBase(envId: string) {
@@ -136,49 +132,28 @@ function waitForCallback(port: number, expectedState: string): Promise<CallbackR
   });
 }
 
-// --- token cache ------------------------------------------------------------
+// --- token cache (in-process only) ------------------------------------------
 
-/** Cache file shape: login env id → token set. Keyed so that switching
- *  P1_MCP_URL to another tenant never reuses (or refreshes against) the
- *  wrong env's tokens. A legacy single-token file simply misses. */
-type TokenCacheFile = Record<string, TokenSet>;
+/** Tokens live in THIS process's memory and nowhere else — no token file.
+ *  The orchestrator is the agent's only P1 surface: the server holds the
+ *  tokens so no model (or other local process) ever reads one. The cost is
+ *  that tokens die with the server — each session's first dispatch does the
+ *  browser dance, which doubles as structural consent: any agent seeking
+ *  direct P1 access must have a human complete a login. Keyed by login env
+ *  so switching P1_MCP_URL never reuses (or refreshes against) the wrong
+ *  env's tokens. */
+const tokenMemory = new Map<string, TokenSet>();
 
-async function readCacheFile(): Promise<TokenCacheFile> {
-  try {
-    const parsed = JSON.parse(await readFile(TOKEN_CACHE, "utf8")) as unknown;
-    if (parsed && typeof parsed === "object") return parsed as TokenCacheFile;
-  } catch {
-    /* no cache or unreadable — fall through to fresh flow */
-  }
-  return {};
-}
-
-async function loadCache(envId: string): Promise<TokenSet | undefined> {
-  const t = (await readCacheFile())[envId];
+function loadCache(envId: string): TokenSet | undefined {
+  const t = tokenMemory.get(envId);
   if (t && typeof t.access_token === "string" && typeof t.expires_at === "number") {
     return t;
   }
   return undefined;
 }
 
-async function saveCache(envId: string, t: TokenSet): Promise<void> {
-  const all = await readCacheFile();
-  // Drop anything that isn't an env-keyed token set (e.g. the legacy flat file).
-  for (const k of Object.keys(all)) {
-    if (typeof all[k]?.access_token !== "string") delete all[k];
-  }
-  all[envId] = t;
-  await mkdir(join(TOKEN_CACHE, ".."), { recursive: true });
-  await writeFile(TOKEN_CACHE, JSON.stringify(all, null, 2), { mode: 0o600 });
-  await chmod(TOKEN_CACHE, 0o600);
-}
-
-export async function clearTokenCache(): Promise<void> {
-  try {
-    await unlink(TOKEN_CACHE);
-  } catch {
-    /* already gone */
-  }
+function saveCache(envId: string, t: TokenSet): void {
+  tokenMemory.set(envId, t);
 }
 
 // --- the dance ---------------------------------------------------------------
@@ -288,7 +263,7 @@ const inFlight = new Map<string, Promise<TokenSourceResult>>();
 
 async function resolveFromCacheOrLogin(envId: string): Promise<TokenSourceResult> {
   // 2. cached token (still valid?)
-  const cached = await loadCache(envId);
+  const cached = loadCache(envId);
   if (cached && cached.expires_at > Date.now() + 60_000) {
     return { token: cached.access_token, via: "cache" };
   }
@@ -297,7 +272,7 @@ async function resolveFromCacheOrLogin(envId: string): Promise<TokenSourceResult
   if (cached?.refresh_token) {
     try {
       const fresh = await refreshToken(envId, cached.refresh_token);
-      await saveCache(envId, fresh);
+      saveCache(envId, fresh);
       return { token: fresh.access_token, via: "refresh" };
     } catch (err) {
       console.error(
@@ -323,7 +298,7 @@ async function resolveFromCacheOrLogin(envId: string): Promise<TokenSourceResult
 
   console.error(
     `\n[p1-orchestrator] No valid PingOne token. Opening browser to sign in as an admin…\n` +
-      `  (first run only; tokens are cached and refreshed at ${TOKEN_CACHE})\n`,
+      `  (once per orchestrator session; tokens live in the server process only)\n`,
   );
   openBrowser(authUrl.toString());
 
@@ -332,6 +307,6 @@ async function resolveFromCacheOrLogin(envId: string): Promise<TokenSourceResult
     throw new Error(`OAuth failed: ${cb.error ?? "no code in callback"}`);
   }
   const tokens = await exchangeCode(envId, cb.code, verifier, redirectUri);
-  await saveCache(envId, tokens);
+  saveCache(envId, tokens);
   return { token: tokens.access_token, via: "browser" };
 }
