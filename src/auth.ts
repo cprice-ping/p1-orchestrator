@@ -16,9 +16,11 @@
  *                                 refresh on expiry — NO token file exists)
  *   3. fresh browser flow        (opens the admin's browser, once)
  *
- * Tokens die with this process: each session's first dispatch does the
- * browser dance once, which doubles as structural consent — the human
- * must complete a login before any agent gains direct P1 access.
+ * Tokens die with this process — no credential at rest for another
+ * process to read. Another agent seeking direct P1 access must run its
+ * own AuthN request: silent while the human's AS session lasts (SSO
+ * mints the code), interactive when no session exists. The human gates
+ * session establishment — not each action.
  */
 
 import { createHash, randomBytes } from "node:crypto";
@@ -138,8 +140,8 @@ function waitForCallback(port: number, expectedState: string): Promise<CallbackR
  *  The orchestrator is the agent's only P1 surface: the server holds the
  *  tokens so no model (or other local process) ever reads one. The cost is
  *  that tokens die with the server — each session's first dispatch does the
- *  browser dance, which doubles as structural consent: any agent seeking
- *  direct P1 access must have a human complete a login. Keyed by login env
+ *  browser dance — silent re-mint while the human's AS session lives,
+ *  interactive once per session. Keyed by login env
  *  so switching P1_MCP_URL never reuses (or refreshes against) the wrong
  *  env's tokens. */
 const tokenMemory = new Map<string, TokenSet>();

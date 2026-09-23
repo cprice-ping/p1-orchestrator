@@ -159,8 +159,12 @@ the orchestrator server's memory — no token file exists.** That is the
 boundary made structural: the orchestrator is the agent's only P1 surface,
 the server holds the tokens, and no model (or other local process) can
 read one. The cost is one browser dance per session (tokens die with the
-server) — which doubles as consent: any agent seeking direct P1 access
-needs a human to complete a login. Practical note: make the *first*
+server) — so nothing sits on disk for another process to read. The
+consent boundary is the SSO session: the first AuthN of a session is
+interactive (the human signs in); later requests mint silently while
+that session lives. Another agent's direct P1 access rides the session
+the human established — per-action consent is what the specialist
+gates provide, on the gated path. Practical note: make the *first*
 dispatch of a session something small — the browser dance happens inside
 it, and an MCP client's 60s call timeout will expire if the human doesn't
 finish the sign-in in that window. A directory listing leaks nothing

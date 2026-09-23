@@ -709,7 +709,13 @@
       sit at the human's power level with none of the specialist's
       constraints. The pattern's answer is a deployment rule, not code:
       <strong>the orchestrator is the agent's only P1 surface</strong> — the
-      server holds the tokens so no model ever touches one. Hosted, that's
+      server holds the tokens so no model ever touches one, and no
+      credential sits at rest for another process to read. The consent
+      boundary is the SSO session: the first AuthN is interactive; later
+      requests mint silently while that session lives — so another agent's
+      direct P1 access rides the session the human established, at session
+      granularity. Per-action consent is what the specialist gates provide,
+      on the gated path. Hosted, that's
       automatic (per-user token stores, ingress auth — the graduation
       checklist below); locally, it is a stated caveat. A capability kept
       off the agent path (environment deletion, production creation —
