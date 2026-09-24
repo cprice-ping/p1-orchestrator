@@ -211,10 +211,11 @@ interrogation of the specialist's own reasoning.
 ## Personal Authorize specialist
 
 This fork includes an executable `authorize_policy` specialist with the complete
-EA Authorize skill and PingCLI-managed API authentication. See the
+EA Authorize skill and the orchestrator's existing OAuth authentication. See the
 [personal setup and verification guide](docs/PERSONAL_AUTHORIZE.md). Inspect is
-the default; authoring, deployment and evaluation use explicit modes. Live reads
-and one Claude dispatch are verified; writes are mock-tested only.
+the default; authoring, deployment and evaluation use explicit modes. A direct
+OAuth-authenticated Atlas API read and one Claude dispatch are verified; writes
+are mock-tested only.
 
 The [earlier draft](docs/authorize-specialist/README.md) remains as historical
 coverage analysis and is not the active implementation on this branch.

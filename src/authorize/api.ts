@@ -1,7 +1,3 @@
-import { spawn } from 'node:child_process';
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { z } from 'zod';
 
 const uuid = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
@@ -21,7 +17,7 @@ export type Mode = 'inspect' | 'author' | 'deploy' | 'evaluate';
 export const modeSchema = z.enum(['inspect','author','deploy','evaluate']);
 export type Obj = Record<string, any>;
 export interface Context {
-  environmentId: string; profile: string; configPath?: string;
+  environmentId: string;
   allowedEnvironments: string[]; capabilities: string[]; mode: Mode; allowDestructive: boolean;
 }
 export interface Request { method: 'GET'|'POST'|'PUT'|'DELETE'; path: string; body?: Obj; mediaType?: string }
@@ -29,7 +25,6 @@ export type Transport = (request: Request) => Promise<unknown>;
 
 export function contextFromEnv(environmentId: string, mode: unknown = 'inspect', allowDestructive = false): Context {
   const c: Context = { environmentId, mode: modeSchema.parse(mode), allowDestructive,
-    profile: process.env.PINGCLI_PROFILE ?? '', configPath: process.env.PINGCLI_CONFIG,
     allowedEnvironments: (process.env.AUTHORIZE_ENVIRONMENTS ?? '').split(',').map(x=>x.trim()).filter(Boolean),
     capabilities: (process.env.AUTHORIZE_CAPABILITIES ?? 'inspect').split(',').map(x=>x.trim()),
   };
@@ -38,7 +33,6 @@ export function contextFromEnv(environmentId: string, mode: unknown = 'inspect',
 export function validateContext(c: Context) {
   uuid.parse(c.environmentId);
   if (!c.allowedEnvironments.includes(c.environmentId)) throw new Error('Target environment is not in AUTHORIZE_ENVIRONMENTS.');
-  if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,99}$/.test(c.profile)) throw new Error('Set an explicit PINGCLI_PROFILE; no default production profile is selected.');
   modeSchema.parse(c.mode);
   if (!c.capabilities.includes(c.mode)) throw new Error(`Mode ${c.mode} is disabled by AUTHORIZE_CAPABILITIES.`);
 }
@@ -78,43 +72,38 @@ function assertNoSecrets(value: unknown) {
   if (JSON.stringify(value).includes('[REDACTED')) throw new Error('Cannot write a redacted representation.');
 }
 
-/** Fixed API command, no arbitrary flags/hosts/method supplied by the model. */
-export function cliArgs(c: Context, req: Request, bodyFile?: string): string[] {
-  validateContext(c);
-  const prefix = `environments/${c.environmentId}/`;
-  if (!req.path.startsWith(prefix) || /[\s#\\]/.test(req.path) || req.path.includes('..')) throw new Error('Invalid request path.');
-  return [...(c.configPath ? ['--config',c.configPath] : []), '--profile',c.profile,
-    'pingone','api','--fail','--http-method',req.method,'--output-format','json',
-    '--header',`Content-Type: ${req.mediaType ?? 'application/json'}`,
-    ...(bodyFile ? ['--data',bodyFile] : []), req.path];
+const apiHosts: Record<string,string> = {
+  'mcp.pingone.com':'api.pingone.com', 'mcp.pingone.ca':'api.pingone.ca',
+  'mcp.pingone.eu':'api.pingone.eu', 'mcp.pingone.asia':'api.pingone.asia',
+  'mcp.pingone.sg':'api.pingone.sg', 'mcp.pingone.com.au':'api.pingone.com.au',
+};
+export function managementApiBase(mcpUrl: string): URL {
+  let mcp: URL;
+  try { mcp=new URL(mcpUrl); } catch { throw new Error('Set P1_MCP_URL to the configured PingOne MCP URL.'); }
+  const match=mcp.pathname.match(/^\/admin\/([0-9a-f-]{36})\/mcp\/?$/i);
+  if(mcp.protocol!=='https:'||!match||!apiHosts[mcp.hostname])throw new Error('P1_MCP_URL must be a supported PingOne regional MCP endpoint.');
+  return new URL(`https://${apiHosts[mcp.hostname]}/v1/`);
 }
-export interface ProcessOptions { binary?: string; timeoutMs?: number; maxBytes?: number; env?: NodeJS.ProcessEnv }
-export async function executeCli(c: Context, req: Request, opts: ProcessOptions = {}): Promise<unknown> {
-  let dir: string | undefined;
-  try {
-    let file: string | undefined;
-    if (req.body !== undefined) {
-      dir = await mkdtemp(join(tmpdir(),'p1-authorize-')); file=join(dir,'body.json');
-      await writeFile(file,JSON.stringify(req.body),{mode:0o600});
-    }
-    const args = cliArgs(c,req,file);
-    return await new Promise((resolve,reject)=>{
-      const child = spawn(opts.binary ?? 'pingcli',args,{stdio:['ignore','pipe','pipe'], env:opts.env ?? process.env, shell:false});
-      let out=''; let bytes=0; let done=false;
-      const finish=(err?: Error, value?: unknown)=>{if(done)return;done=true;clearTimeout(timer);err?reject(err):resolve(value);};
-      const timer=setTimeout(()=>{child.kill('SIGKILL');finish(new Error('PingCLI timed out. For a write, inspect state before retrying; its outcome may be unknown.'));},opts.timeoutMs ?? 60000);
-      const collect=(chunk: Buffer, stdout:boolean)=>{bytes+=chunk.length;if(bytes>(opts.maxBytes??1024*1024)){child.kill('SIGKILL');finish(new Error('PingCLI response exceeded the limit; no truncated representation is returned.'));} else if(stdout)out+=chunk.toString();};
-      child.stdout.on('data',(x:Buffer)=>collect(x,true));child.stderr.on('data',(x:Buffer)=>collect(x,false));
-      child.on('error',()=>finish(new Error('Cannot start PingCLI. Check the installed executable and operator configuration.')));
-      child.on('close',code=>{
-        if(done)return;
-        // Never relay stderr: CLI authentication errors can echo sensitive configuration.
-        if(code!==0){finish(new Error(`PingCLI exited ${code}; check profile/permissions privately. No automatic retry. A write may require reconciliation.`));return;}
-        if(!out.trim()){ if(req.method==='DELETE')finish(undefined,{deleted:true});else finish(new Error('PingCLI returned no JSON; outcome requires readback.'));return;}
-        try {const parsed=JSON.parse(out);if(parsed===null || typeof parsed!=='object')throw new Error();if ('schemaVersion' in parsed && 'status' in parsed) { if (parsed.status !== 'success') { finish(new Error('PingCLI reported an unsuccessful response envelope.')); return; } finish(undefined,parsed.data); } else finish(undefined,parsed);}catch {finish(new Error('PingCLI returned malformed/non-object JSON; no partial output is exposed.'));}
-      });
-    });
-  } finally { if(dir)await rm(dir,{recursive:true,force:true}); }
+/** Management API transport bound to the orchestrator's in-memory OAuth token. */
+export function createOAuthTransport(token: string, mcpUrl: string, fetcher: typeof fetch = fetch): Transport {
+  if(!token || /[\r\n]/.test(token))throw new Error('A valid in-memory PingOne OAuth token is required.');
+  const base=managementApiBase(mcpUrl);
+  return async req=>{
+    if(!/^(GET|POST|PUT|DELETE)$/.test(req.method) || /[\s#\\]/.test(req.path) || req.path.includes('..'))throw new Error('Invalid Management API request.');
+    const url=new URL(req.path,base);
+    if(url.origin!==base.origin || !url.pathname.startsWith('/v1/environments/'))throw new Error('Invalid Management API request.');
+    const headers:Record<string,string>={Authorization:`Bearer ${token}`,Accept:'application/json'};
+    if(req.body!==undefined)headers['Content-Type']=req.mediaType??'application/json';
+    let response:Response;
+    try { response=await fetcher(url,{method:req.method,headers,body:req.body===undefined?undefined:JSON.stringify(req.body),signal:AbortSignal.timeout(60000)}); }
+    catch { throw new Error('PingOne Management API request failed before a response. For a write, inspect state before retrying.'); }
+    if(!response.ok)throw new Error(`PingOne Management API returned HTTP ${response.status}; response details are withheld.`);
+    if(response.status===204)return {deleted:true};
+    let value:unknown;
+    try {value=await response.json();} catch {throw new Error('PingOne Management API returned an unreadable response.');}
+    if(!value||typeof value!=='object')throw new Error('PingOne Management API returned a non-object response.');
+    return value;
+  };
 }
 function object(value: unknown): Obj {
   if(!value || typeof value!=='object' || Array.isArray(value))throw new Error('Expected an object API response.');return value as Obj;
@@ -154,7 +143,7 @@ function matches(expected: any, actual: any): boolean {
 }
 
 export class AuthorizeApi {
-  constructor(readonly context: Context, private transport: Transport = req=>executeCli(context,req)) {validateContext(context);}
+  constructor(readonly context: Context, private transport: Transport) {validateContext(context);}
   async read(raw: unknown) {const input=readSchema.parse(raw);return sanitize(await this.transport({method:'GET',path:route(this.context,input)}));}
   async change(raw: unknown) {
     const i=changeSchema.parse(raw), c=this.context; validateContext(c);

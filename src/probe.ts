@@ -9,6 +9,7 @@
  */
 
 import { envIdFromMcpUrl, launchSpecialist } from "./launch.js";
+import { resolveToken } from "./auth.js";
 import { listAll } from "./registry.js";
 
 const [name, ...rest] = process.argv.slice(2);
@@ -33,7 +34,7 @@ if (!def) {
 const url = process.env.P1_MCP_URL;
 const envId =
   process.env.P1_ENVIRONMENT_ID ?? envIdFromMcpUrl(url ?? "");
-if ((!url && def.transport !== "authorize-cli") || !envId) {
+if (!url || !envId) {
   console.error(
     "Set P1_MCP_URL=https://mcp.pingone.com/admin/<admin-env-uuid>/mcp first.\n" +
       "P1_ENVIRONMENT_ID optionally overrides the task env (default: the URL's admin env).",
@@ -44,6 +45,9 @@ if ((!url && def.transport !== "authorize-cli") || !envId) {
 const t0 = Date.now();
 const engine = (process.env.SPECIALIST_ENGINE ?? "claude").toLowerCase();
 console.error(`  engine: ${engine}${process.env.P1_SPECIALIST_MODEL ? ` (${process.env.P1_SPECIALIST_MODEL})` : ""}`);
+const auth = def.transport === "authorize-oauth"
+  ? await resolveToken(envIdFromMcpUrl(url) ?? "", url)
+  : undefined;
 const out = await launchSpecialist(
   { intent, environmentId: envId, allowDestructive: process.env.P1_ALLOW_DESTRUCTIVE === "1", authorizeMode: (process.env.AUTHORIZE_MODE ?? "inspect") as never },
   def,
@@ -60,6 +64,7 @@ const out = await launchSpecialist(
       }
     },
   },
+  auth?.token,
 );
 const secs = ((Date.now() - t0) / 1000).toFixed(1);
 

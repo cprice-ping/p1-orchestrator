@@ -1,19 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp,writeFile,readFile,stat,rm } from 'node:fs/promises';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
-import { AuthorizeApi, cliArgs, route, sanitize, executeCli, type Context, type Request } from '../src/authorize/api.js';
+import { AuthorizeApi, createOAuthTransport, managementApiBase, route, sanitize, type Context, type Request } from '../src/authorize/api.js';
 import { authorizeRuntime } from '../src/authorize/runtime.js';
 import { systemPlaybook,reference,referenceNames } from '../src/authorize/knowledge.js';
 const env='11111111-1111-4111-8111-111111111111',id='22222222-2222-4222-8222-222222222222',childId='33333333-3333-4333-8333-333333333333';
-const ctx=(mode:Context['mode']='inspect'):Context=>({environmentId:env,profile:'atlas-test',allowedEnvironments:[env],capabilities:['inspect','author','deploy','evaluate'],mode,allowDestructive:false});
-test('environment, schema, UUID and command boundaries',async()=>{
+const ctx=(mode:Context['mode']='inspect'):Context=>({environmentId:env,allowedEnvironments:[env],capabilities:['inspect','author','deploy','evaluate'],mode,allowDestructive:false});
+test('environment, schema, UUID and Management API host boundaries',async()=>{
  assert.throws(()=>new AuthorizeApi({...ctx(),environmentId:id}),/not in/);
- assert.throws(()=>new AuthorizeApi({...ctx(),profile:''}),/explicit/);
+ assert.equal(managementApiBase(`https://mcp.pingone.com/admin/${env}/mcp`).href,'https://api.pingone.com/v1/');
+ assert.throws(()=>managementApiBase(`https://attacker.invalid/admin/${env}/mcp`),/supported/);
+ assert.throws(()=>managementApiBase(`http://mcp.pingone.com/admin/${env}/mcp`),/supported/);
  assert.throws(()=>route(ctx(),{resource:'policies',id:'../applications'}));
- const args=cliArgs(ctx(),{method:'GET',path:route(ctx(),{resource:'policies',id})});
- assert.equal(args.includes('--environment-id'),false);assert.ok(args.includes('--fail'));assert.ok(args.includes('atlas-test'));
  let calls=0;const rt=authorizeRuntime(ctx(),async()=>{calls++;return {};});
  assert.equal((await rt.call('authorize_read',{resource:'policies',environmentId:id})).isError,true);
  assert.equal((await rt.call('authorize_read',{resource:'policies',positional:['--profile','prod']})).isError,true);
@@ -70,27 +67,17 @@ test('entire skill and all seven references load without arbitrary file access',
  for(const topic of referenceNames)assert.ok((await reference({topic})).length>500);
  await assert.rejects(reference({topic:'../../.env'}));
 });
-test('CLI envelope, body privacy/cleanup, failures, timeout and bounded output',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'authorize-test-'));const mock=join(dir,'pingcli');
- const script=`#!/usr/bin/env node
-const fs=require('fs');const args=process.argv.slice(2);const mode=process.env.MOCK_MODE;
-if(mode==='hang'){setTimeout(()=>{},10000);return;}
-if(mode==='fail'){console.error('Bearer never-disclose');process.exit(1);}
-if(mode==='large'){console.log('x'.repeat(4096));return;}
-if(mode==='bad'){console.log('not JSON');return;}
-const idx=args.indexOf('--data');let body;
-if(idx>=0){body=JSON.parse(fs.readFileSync(args[idx+1],'utf8'));fs.writeFileSync(process.env.CAPTURE,JSON.stringify({file:args[idx+1],mode:fs.statSync(args[idx+1]).mode&511,args}));}
-console.log(JSON.stringify({schemaVersion:'1',status:'success',data:{id:'${id}',name:body?.name??'read'}}));`;
- await writeFile(mock,script,{mode:0o700});const capture=join(dir,'capture.json');
- try {
-  const request:Request={method:'POST',path:`environments/${env}/authorizationPolicies`,body:{name:'private-body-value'}};
-  assert.equal((await executeCli(ctx('author'),request,{binary:mock,env:{...process.env,CAPTURE:capture}}) as any).name,'private-body-value');
-  const saved=JSON.parse(await readFile(capture,'utf8'));assert.equal(saved.mode,0o600);assert.ok(!saved.args.join(' ').includes('private-body-value'));await assert.rejects(stat(saved.file));
-  for(const [mode,pattern] of [['fail',/exited 1/],['bad',/malformed/],['large',/exceeded/],['hang',/timed out/]] as const) {
-   await assert.rejects(executeCli(ctx(),{method:'GET',path:`environments/${env}/authorizationPolicies`},{binary:mock,env:{...process.env,MOCK_MODE:mode},timeoutMs:100,maxBytes:2048}),pattern);
-  }
-  await assert.rejects(executeCli(ctx(),{method:'GET',path:`environments/${env}/authorizationPolicies`},{binary:join(dir,'absent')}),/Cannot start/);
- }finally{await rm(dir,{recursive:true,force:true});}
+test('OAuth transport binds Management API calls to the fixed region and keeps tokens out of errors',async()=>{
+ let seenUrl='',seenInit:RequestInit|undefined;
+ const transport=createOAuthTransport('private-bearer-token',`https://mcp.pingone.com/admin/${env}/mcp`,async(input,init)=>{
+  seenUrl=String(input);seenInit=init;return new Response(JSON.stringify({id}),{status:200,headers:{'content-type':'application/json'}});
+ });
+ const result=await transport({method:'GET',path:`environments/${env}/authorizationPolicies?limit=1`});
+ assert.deepEqual(result,{id});assert.equal(seenUrl,`https://api.pingone.com/v1/environments/${env}/authorizationPolicies?limit=1`);
+ assert.equal((seenInit?.headers as Record<string,string>).Authorization,'Bearer private-bearer-token');
+ const failing=createOAuthTransport('never-return-this',`https://mcp.pingone.com/admin/${env}/mcp`,async()=>new Response('private-bearer-token',{status:403}));
+ await assert.rejects(failing({method:'GET',path:`environments/${env}/authorizationPolicies`}),e=>e instanceof Error&&e.message.includes('HTTP 403')&&!e.message.includes('never-return-this'));
+ await assert.rejects(transport({method:'GET',path:`https://attacker.invalid/${env}`}),/Invalid Management API request/);
 });
 
 test('failed child link after a Custom write is not reported as success',async()=>{

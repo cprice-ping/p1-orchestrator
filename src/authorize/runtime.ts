@@ -1,7 +1,7 @@
 import { AuthorizeApi, readSchema, changeSchema, sanitize, type Context, type Transport } from './api.js';
 import { reference, referenceSchema } from './knowledge.js';
 import { z } from 'zod';
-export function authorizeRuntime(context: Context, transport?: Transport) {
+export function authorizeRuntime(context: Context, transport: Transport) {
   const api=new AuthorizeApi(context,transport);
   const specs=[
     {name:'authorize_read',description:'Read/list Authorize policies, attributes, services, versions, API Servers/operations, Decision Endpoints/history, deployment or version tag. Environment is fixed by dispatch. Use parentId for operations/history. Collections may be paginated; inspect links and use cursor, never claim a partial list is complete.',schema:readSchema, run:(args:unknown)=>api.read(args)},

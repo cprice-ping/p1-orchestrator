@@ -7,16 +7,16 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { LaunchInput, LaunchOutput, LaunchCallbacks } from '../launch.js';
 import type { SpecialistDef } from '../registry.js';
-import { contextFromEnv, sanitize } from './api.js';
+import { contextFromEnv, createOAuthTransport, sanitize } from './api.js';
 import { systemPlaybook } from './knowledge.js';
 import { authorizeRuntime } from './runtime.js';
 
-export async function launchAuthorize(input:LaunchInput,def:SpecialistDef,callbacks?:LaunchCallbacks):Promise<LaunchOutput> {
+export async function launchAuthorize(input:LaunchInput,def:SpecialistDef,callbacks:LaunchCallbacks|undefined,accessToken:string):Promise<LaunchOutput> {
   const context=contextFromEnv(input.environmentId,input.authorizeMode ?? 'inspect',input.allowDestructive);
   if(input.sessionId)throw new Error('Authorize sessions are fresh per dispatch to bind environment and mode. Include a sanitized prior summary in intent.');
-  const runtime=authorizeRuntime(context);
+  const runtime=authorizeRuntime(context,createOAuthTransport(accessToken,process.env.P1_MCP_URL??''));
   const system=await systemPlaybook(def.playbook);
-  const prompt=`Environment: ${context.environmentId}\nMode: ${context.mode}\nCLI profile (not the MCP login identity): ${context.profile}\nTask: ${input.intent}`;
+  const prompt=`Environment: ${context.environmentId}\nMode: ${context.mode}\nAuthentication: orchestrator PingOne OAuth session\nTask: ${input.intent}`;
   const engine=process.env.SPECIALIST_ENGINE ?? 'claude';
   if(!['claude','gemini'].includes(engine))throw new Error('Unsupported specialist engine.');
   const toolCalls:string[]=[], toolArgs:string[]=[];
@@ -39,7 +39,7 @@ export async function launchAuthorize(input:LaunchInput,def:SpecialistDef,callba
     if(engine==='claude') {
       const sdk=createSdkMcpServer({name:'authorize',version:'0.1.0',tools:runtime.specs.map(s=>tool(s.name,s.description,s.schema.shape as any,(args)=>call(s.name,args)))});
       const allowed=new Set(runtime.specs.map(s=>`mcp__authorize__${s.name}`));
-      // Do not forward CLI credential/environment configuration to the child model runtime.
+      // Do not forward orchestrator credentials/environment configuration to the child model runtime.
       const childEnv={...process.env};
       for(const key of Object.keys(childEnv)) if(/^(PINGCLI|P1_ACCESS_TOKEN|AUTHORIZE_|API_WORKER_)/.test(key)) delete childEnv[key];
       const stream=query({prompt,options:{
@@ -74,5 +74,5 @@ export async function launchAuthorize(input:LaunchInput,def:SpecialistDef,callba
   report=String(sanitize(report));isError=isError||failed||!report;
   await log({event:'done',isError,toolCalls:toolCalls.length,environmentId:context.environmentId,mode:context.mode});
   callbacks?.onEvent?.({kind:'done',isError,toolCalls:toolCalls.length,ms:Date.now()-start});
-  return {sessionId:'',report,toolCalls,toolArgs,isError,logPath,denied,diagnostics:`engine=${engine}; PingCLI authentication; fresh dispatch; any tool failure marks the run incomplete`};
+  return {sessionId:'',report,toolCalls,toolArgs,isError,logPath,denied,diagnostics:`engine=${engine}; orchestrator OAuth authentication; fresh dispatch; any tool failure marks the run incomplete`};
 }

@@ -1,9 +1,9 @@
 # Personal Authorize specialist
 
-Status: implemented on the personal fork. CLI transport and one Claude specialist
-read are live-verified in the operator-approved Atlas environment (2026-09-24).
-No live writes, deletions, deployment, or evaluation were performed. No tenant
-configuration or credentials are included in this repository.
+Status: implemented on the personal fork. OAuth transport has passed a bounded
+direct Atlas API read and a Claude specialist read (2026-09-24). No live writes,
+deletions, deployment, or evaluation were performed. No tenant configuration or
+credentials are included in this repository.
 
 ## What is included
 
@@ -25,16 +25,18 @@ lookup interface. `dispatch_specialist` now accepts `authorizeMode`.
 
 ## Authentication and execution
 
-The Authorize path calls `pingcli pingone api --fail` with a fixed profile and
-constructed environment-relative route. It does not acquire, decode, forward or
-show an administrative bearer token to the model. PingCLI handles authentication.
-The CLI profile can represent a different identity from a remote MCP login.
+The Authorize path uses the same OAuth token that the orchestrator uses to call
+the PingOne MCP server. The token stays in the orchestrator process and is sent
+only to the regional PingOne Management API endpoint selected from `P1_MCP_URL`.
+The model never receives it. User roles and permissions govern the Management API
+request; the specialist's environment allowlist and mode checks still apply.
 
-Authorize does not require a P1 MCP catalog/login first. Other specialists keep
-the existing remote MCP path; `resolve_environment` still requires remote MCP.
-For this personal specialist supply the exact environment explicitly or through
-`P1_ENVIRONMENT_ID`. Both Claude and Gemini use the same Authorize runtime and
-permission checks; only Claude has a live model-dispatch verification here.
+Authorize now requires the standard `P1_MCP_URL` so the orchestrator can sign in
+to the configured administrator environment and select the matching API region.
+The task environment is supplied explicitly or through `P1_ENVIRONMENT_ID` and
+must also be in `AUTHORIZE_ENVIRONMENTS`. There is no separate PingCLI profile.
+Both Claude and Gemini use the same Authorize runtime and permission checks; only
+Claude has a live model-dispatch verification here.
 
 The Claude engine still requires its own existing model authentication. Gemini
 requires `GEMINI_API_KEY`. Model authentication is separate from PingOne
@@ -42,7 +44,7 @@ administrative authentication; no new model subscription is provisioned.
 
 ## Configuration
 
-Install Node 22+ and PingCLI (tested: v1.8.0, macOS arm64). From this checkout:
+Install Node 22+ and configure the standard PingOne MCP URL. From this checkout:
 
 ```sh
 npm ci
@@ -54,17 +56,16 @@ Provide configuration to the server process, not through model tool arguments:
 
 | Variable | Purpose |
 |---|---|
-| `PINGCLI_PROFILE` | Required explicit existing CLI profile; no implicit `prod` default |
-| `PINGCLI_CONFIG` | Optional path to private CLI configuration; otherwise CLI default |
+| `P1_MCP_URL` | Standard PingOne MCP endpoint; its administrator environment is used for OAuth login and its region selects the Management API host |
 | `AUTHORIZE_ENVIRONMENTS` | Comma-separated exact environment UUID allowlist |
 | `P1_ENVIRONMENT_ID` | Default dispatch target UUID |
 | `AUTHORIZE_CAPABILITIES` | Enabled modes; default `inspect`. Can include `author,deploy,evaluate`; omit `delete` to disable all deletions |
 | `SPECIALIST_ENGINE` | `claude` (default) or `gemini` |
 | `P1_SPECIALIST_MODEL` | Optional configured model override |
 
-Use CLI profile configuration or keychain storage; never add secrets to this repo,
-model prompts, command arguments, or MCP configuration. A dedicated private
-configuration file must have mode 0600. Do not copy another tenant's identifiers.
+The orchestrator performs its normal PingOne OAuth sign-in and keeps tokens in
+process memory. Never place bearer tokens in prompts or request bodies. Do not
+copy another tenant's identifiers.
 
 Attach `node /absolute/path/to/this/checkout/dist/server.js` as a stdio MCP server
 in your client, with the variables above. Paths here are examples, not hardcoded
@@ -95,10 +96,16 @@ an explicit deployment, so inspect effective bindings first.
 ## Verification
 
 - `npm run build`: pass.
-- `npm test`: 13 focused tests pass, including MCP stdio discovery and mode rejection
-  before remote authentication, CLI envelope parsing, failures/timeouts/output
-  limits, private body-file cleanup, environment/schema boundaries, fresh versions,
-  Custom child preservation/parent links, readback mismatch, and redaction.
+- `npm test`: 13 focused tests pass, including MCP stdio discovery, mode rejection
+  before authentication, regional URL validation, OAuth header handling and redaction,
+  environment/schema boundaries, fresh versions, Custom child preservation/parent
+  links, readback mismatch, and output sanitization.
+- Direct token check: the orchestrator OAuth flow in the existing administrator
+  environment returned HTTP 200 for one Atlas `authorizationPolicies?limit=1` GET.
+  Only status and result count were printed.
+- Installed MCP check: one `authorize_policy` dispatch made exactly one read
+  through the shared OAuth token and returned successfully. No CLI profile was
+  present in the server configuration.
 - Live read-only adapter check: policies (1), attributes (1, next page present),
   services (0), Decision Endpoints (3). Requests use limit 1 where accepted; the
   endpoint collection returned 3, so collection limits are not assumed universal.
@@ -107,9 +114,9 @@ an explicit deployment, so inspect effective bindings first.
 - Gemini code path compiles and shares the tested runtime; no live Gemini model
   call was run. Configuration mutations/deployment/evaluation are mock-tested only.
 
-`npm run authorize:check` runs only bounded reads, requires the configured profile
-and allowed environment, and prints collection counts rather than raw payloads.
-It is a transport check, not a model or policy-enforcement test.
+`npm run authorize:check` runs only bounded reads, uses the orchestrator OAuth
+session and allowed environment, and prints collection counts rather than raw
+payloads. It is a transport check, not a model or policy-enforcement test.
 
 ## Operational behavior and limits
 
@@ -121,8 +128,8 @@ It is a transport check, not a model or policy-enforcement test.
   retaining existing children unchanged. Parent and new child links are read back.
 - Requested-field mismatches and failed deployment verification mark the tool/run
   incomplete. Configuration readback does not prove a live decision or enforcement.
-- CLI output is bounded and parsed completely; malformed/oversized responses fail
-  rather than returning truncated trees. There are no automatic mutation retries.
+- API errors withhold response bodies and never relay bearer tokens. There are no
+  automatic mutation retries.
   A timeout after a write is an ambiguous outcome: read state before retrying.
 - Credentials in recognized fields, bearer/JWT strings, and JSON-encoded traces
   are redacted; raw tool arguments/results and final reports are not written to

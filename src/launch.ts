@@ -175,10 +175,12 @@ export async function launchSpecialist(
   input: LaunchInput,
   def: SpecialistDef,
   callbacks?: LaunchCallbacks,
+  accessToken?: string,
 ): Promise<LaunchOutput> {
-  if (def.transport === "authorize-cli") {
+  if (def.transport === "authorize-oauth") {
     const { launchAuthorize } = await import("./authorize/launch.js");
-    return launchAuthorize(input, def, callbacks);
+    if (!accessToken) throw new Error("PingOne OAuth authentication is required for Authorize.");
+    return launchAuthorize(input, def, callbacks, accessToken);
   }
   let corpusContext = "";
   if (!input.sessionId && def.topics?.length) {

@@ -255,9 +255,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 
   try {
+    if (def.transport === "authorize-oauth") {
+      // Reject disabled modes and invalid URLs before prompting for OAuth.
+      const { contextFromEnv, managementApiBase } = await import("./authorize/api.js");
+      contextFromEnv(envId, args?.authorizeMode ?? "inspect", args?.allowDestructive === true);
+      managementApiBase(process.env.P1_MCP_URL ?? "");
+    }
     // Token: env override → cache → refresh → one-time browser flow.
-    // Login env: the MCP URL's admin env if configured, else the task env.
-    const auth = def.transport === "authorize-cli" ? undefined : accessToken
+    // Login env is the MCP URL's administrator environment; the task environment
+    // is separately pinned by the specialist's AUTHORIZE_ENVIRONMENTS allowlist.
+    const auth = accessToken
       ? { token: accessToken, via: "env" as const }
       : await resolveToken(
           envIdFromMcpUrl(process.env.P1_MCP_URL ?? "") ?? envId,
@@ -312,6 +319,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       { intent, environmentId: envId, sessionId: sessionIdArg, allowDestructive, authorizeMode: args?.authorizeMode as never },
       def,
       { onEvent },
+      auth.token,
     );
 
     const lines = [
