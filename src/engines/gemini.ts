@@ -86,6 +86,7 @@ export async function launchSpecialistGemini(
 
   const toolCalls: string[] = [];
   const toolArgs: string[] = [];
+  const denied: { tool: string; reason: string }[] = [];
   let report = "";
   const t0 = Date.now();
   const maxTurns = input.maxTurns ?? 20;
@@ -129,14 +130,15 @@ export async function launchSpecialistGemini(
 
       let result: ToolCallPayload;
       try {
-        if (!def.tools.includes(name)) {
-          throw new Error(`${name} is outside this specialist's tool set.`);
-        }
-        if (isDestructiveTool(name) && !input.allowDestructive) {
-          throw new Error(
-            `${name} is destructive and this dispatch did not set allowDestructive. ` +
-              "Do not retry or work around this; report what you would delete so the caller can re-dispatch with allowDestructive.",
-          );
+        const reason = !def.tools.includes(name)
+          ? `${name} is outside this specialist's tool set.`
+          : isDestructiveTool(name) && !input.allowDestructive
+            ? `${name} is destructive and this dispatch did not set allowDestructive. ` +
+              "Do not retry or work around this; report what you would delete so the caller can re-dispatch with allowDestructive."
+            : null;
+        if (reason) {
+          denied.push({ tool: name, reason });
+          throw new Error(reason);
         }
         result = await client.callTool(name, args);
       } catch (err) {
@@ -188,6 +190,7 @@ export async function launchSpecialistGemini(
     isError: report.startsWith("(") || report.startsWith("TOOL ERROR"),
     diagnostics: `engine=gemini model=${model} declarable_tools=${declarations.length}`,
     logPath,
+    denied,
   };
 }
 

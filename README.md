@@ -179,7 +179,27 @@ fail-closed permission gate. Delete operations are refused unless the
 dispatch sets `allowDestructive: true`. Without it, the specialist reports
 what it would delete, so the caller can re-dispatch deliberately. The
 Gemini engine enforces the same gate. For `npm run probe`, opt in with
-`P1_ALLOW_DESTRUCTIVE=1`.
+`P1_ALLOW_DESTRUCTIVE=1`. A refused call is also reported by the
+orchestrator itself at the end of the dispatch result, along with the next
+step, so the operator sees it even if the specialist's report doesn't
+mention it.
+
+The PingOne connection never leaves the orchestrator process. Specialists
+reach PingOne through an in-process proxy, so the bearer token is never
+handed to the specialist runtime's child process. That means it never
+appears in its command line or environment.
+
+The operator's guardrails come from the server. The orchestrator's MCP
+`initialize` reply carries `instructions` that MCP clients (Claude Code
+among them) add to the operating agent's system prompt: make PingOne changes
+only through `dispatch_specialist`, never by direct API calls, `pingcli`, or
+a found token; relay refusals instead of finishing the action another way;
+confirm deletes with the user before re-dispatching with `allowDestructive`.
+There is nothing to install or configure. These instructions guide a
+cooperative operator; they are not enforcement. What stops a determined
+agent is PingOne itself (roles, sign-on policy), and on a local machine
+the orchestrator can't take away a shell's other routes (the browser's
+PingOne sign-in session, a `pingcli` profile).
 
 ## Visibility
 

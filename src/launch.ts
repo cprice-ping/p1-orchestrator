@@ -23,6 +23,12 @@ import { runPingcli } from "./pingcli-bridge.js";
 import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import type { FallbackSpec } from "./pingcli-bridge.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import {
+  CallToolRequestSchema,
+  ListToolsRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
+import { McpToolClient } from "./engines/mcp-client.js";
 
 export interface LaunchInput {
   intent: string;
@@ -57,6 +63,8 @@ export interface LaunchOutput {
   diagnostics?: string;
   /** Path to the persisted NDJSON run log. */
   logPath: string;
+  /** Tool calls the gate refused (tool name + reason), for the caller. */
+  denied?: { tool: string; reason: string }[];
 }
 
 /**
@@ -215,7 +223,14 @@ async function launchSpecialistClaude(
   const auth = await resolveToken(envIdFromMcpUrl(url) ?? "", url);
   const accessToken = auth.token;
 
-  const allTools = await fetchToolCatalog(url, accessToken);
+  // The P1 connection lives in THIS process: the specialist's runtime (a
+  // child `claude` process) reaches PingOne only through the in-process
+  // proxy below, so the bearer token never crosses a process boundary
+  // (an http mcpServers entry would put it in the child's argv, readable
+  // by any same-user process via ps).
+  const p1 = new McpToolClient(url, accessToken);
+  const catalog = await p1.listTools();
+  const allTools = Object.keys(catalog);
 
   // Dual-source subset: catalog hits → native MCP; catalog misses with a
   // fallback mapping (e.g. Protect via pingcli) → CLI bridge tools.
@@ -225,6 +240,7 @@ async function launchSpecialistClaude(
   const cliBridgeTools = missing.filter((t) => fallbacks[t]);
   const unresolvable = missing.filter((t) => !fallbacks[t]);
   if (unresolvable.length) {
+    await p1.close().catch(() => {});
     throw new Error(
       `Specialist '${def.name}' references tools missing from the catalog with no fallback: ${unresolvable.join(", ")}`,
     );
@@ -236,6 +252,49 @@ async function launchSpecialistClaude(
     ...effectiveSubset.filter((t) => inCatalog.has(t)).map((t) => `mcp__${MCP_SERVER_NAME}__${t}`),
     ...cliBridgeTools.map((t) => `mcp__pingcli__${t}`),
   ]);
+
+  // One gate for every tool call, enforced in orchestrator code: only the
+  // specialist's subset, and delete* only with allowDestructive. Refusals
+  // are recorded so the orchestrator (not the specialist) reports them.
+  const denied: { tool: string; reason: string }[] = [];
+  const gate = (toolName: string): string | null => {
+    let reason: string | null = null;
+    if (!allowed.has(toolName)) {
+      reason = `${toolName} is outside this specialist's tool set.`;
+    } else if (isDestructiveTool(toolName) && !input.allowDestructive) {
+      reason =
+        `${toolName} is destructive and this dispatch did not set allowDestructive. ` +
+        "Do not retry or work around this; report what you would delete so the caller can re-dispatch with allowDestructive.";
+    }
+    if (reason) denied.push({ tool: toolName.replace(/^mcp__\w+?__/, ""), reason });
+    return reason;
+  };
+
+  // In-process proxy for the P1 subset: the live catalog's own descriptions
+  // and JSON Schemas, forwarded over this process's MCP session.
+  const p1Subset = effectiveSubset.filter((t) => inCatalog.has(t));
+  const p1Proxy = new McpServer(
+    { name: MCP_SERVER_NAME, version: "0.1.0" },
+    { capabilities: { tools: {} } },
+  );
+  p1Proxy.server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: p1Subset.map((name) => ({
+      name,
+      description: catalog[name].description ?? "",
+      inputSchema: catalog[name].inputSchema as { type: "object" },
+    })),
+  }));
+  p1Proxy.server.setRequestHandler(CallToolRequestSchema, async (req) => {
+    const name = req.params.name;
+    if (!p1Subset.includes(name)) {
+      return { content: [{ type: "text", text: `${name} is outside this specialist's tool set.` }], isError: true };
+    }
+    try {
+      return (await p1.callTool(name, req.params.arguments ?? {})) as never;
+    } catch (err) {
+      return { content: [{ type: "text", text: `TOOL ERROR: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
+    }
+  });
 
   const task = input.followUp ?? input.intent;
   const corpusCtx = (input as LaunchInput & { _corpusContext?: string })._corpusContext ?? "";
@@ -257,11 +316,7 @@ async function launchSpecialistClaude(
     model: def.model ?? process.env.P1_SPECIALIST_MODEL ?? process.env.ANTHROPIC_MODEL,
     maxTurns: input.maxTurns ?? 20,
     mcpServers: {
-      [MCP_SERVER_NAME]: {
-        type: "http",
-        url,
-        headers: { Authorization: `Bearer ${accessToken}` },
-      },
+      [MCP_SERVER_NAME]: { type: "sdk", name: MCP_SERVER_NAME, instance: p1Proxy },
       // CLI bridge: fallback tools that shell out to pingcli for domains
       // the MCP catalog doesn't carry (Protect today).
       ...(cliBridgeTools.length
@@ -304,18 +359,10 @@ async function launchSpecialistClaude(
     // caller dispatched with allowDestructive. Fail-closed.
     permissionMode: "default",
     canUseTool: async (toolName: string, toolInput: Record<string, unknown>) => {
-      if (!allowed.has(toolName)) {
-        return { behavior: "deny", message: `${toolName} is outside this specialist's tool set.` };
-      }
-      if (isDestructiveTool(toolName) && !input.allowDestructive) {
-        return {
-          behavior: "deny",
-          message:
-            `${toolName} is destructive and this dispatch did not set allowDestructive. ` +
-            "Do not retry or work around this; report what you would delete so the caller can re-dispatch with allowDestructive.",
-        };
-      }
-      return { behavior: "allow", updatedInput: toolInput };
+      const reason = gate(toolName);
+      return reason
+        ? { behavior: "deny", message: reason }
+        : { behavior: "allow", updatedInput: toolInput };
     },
   };
 
@@ -343,97 +390,102 @@ async function launchSpecialistClaude(
 
   const emit = (e: SpecialistEvent) => callbacks?.onEvent?.(e);
 
-  for await (const message of query({ prompt, options: options as never })) {
-    if (message.type === "system" && message.subtype === "init") {
-      const init = message as unknown as {
-        session_id?: string;
-        mcp_servers?: { name: string; status: string }[];
-        tools?: string[];
-      };
-      sessionId = init.session_id ?? "";
-      if (init.mcp_servers) {
-        diagnostics += init.mcp_servers
-          .map((s) => `${s.name}:${s.status}`)
-          .join(",");
+  try {
+    for await (const message of query({ prompt, options: options as never })) {
+      if (message.type === "system" && message.subtype === "init") {
+        const init = message as unknown as {
+          session_id?: string;
+          mcp_servers?: { name: string; status: string }[];
+          tools?: string[];
+        };
+        sessionId = init.session_id ?? "";
+        if (init.mcp_servers) {
+          diagnostics += init.mcp_servers
+            .map((s) => `${s.name}:${s.status}`)
+            .join(",");
+        }
+        let visible = 0;
+        if (init.tools) {
+          visible = init.tools.filter((t) => t.startsWith("mcp__")).length;
+          diagnostics += ` | visible_mcp_tools=${visible}`;
+        }
+        const initEvt: SpecialistEvent = {
+          kind: "init",
+          servers: diagnostics.split(" |")[0],
+          visibleMcpTools: visible,
+        };
+        await log({ ts: new Date().toISOString(), event: "init", ...initEvt });
+        emit(initEvt);
       }
-      let visible = 0;
-      if (init.tools) {
-        visible = init.tools.filter((t) => t.startsWith("mcp__")).length;
-        diagnostics += ` | visible_mcp_tools=${visible}`;
-      }
-      const initEvt: SpecialistEvent = {
-        kind: "init",
-        servers: diagnostics.split(" |")[0],
-        visibleMcpTools: visible,
-      };
-      await log({ ts: new Date().toISOString(), event: "init", ...initEvt });
-      emit(initEvt);
-    }
 
-    if (message.type === "assistant") {
-      const content = (message as { message?: { content?: unknown[] } })
-        .message?.content;
-      if (Array.isArray(content)) {
-        for (const block of content) {
-          if (!block || typeof block !== "object") continue;
-          const b = block as {
-            type?: string;
-            name?: string;
-            input?: unknown;
-            text?: string;
-          };
-          if (b.type === "tool_use") {
-            const name = b.name ?? "?";
-            toolCalls.push(name);
-            // Compact arg preview: first ~120 chars of the interesting bits.
-            const preview = JSON.stringify(b.input ?? {}) // structured per call
-              .replace(/environmentId":"[^"]+"/g, 'environmentId":"…"')
-              .slice(1, 140);
-            toolArgs.push(preview);
-            await log({
-              ts: new Date().toISOString(),
-              event: "tool_call",
-              name,
-              argsPreview: preview,
-            });
-            emit({ kind: "tool_call", name, argsPreview: preview });
-          } else if (b.type === "text" && b.text?.trim()) {
-            await log({
-              ts: new Date().toISOString(),
-              event: "text",
-              text: b.text.slice(0, 500),
-            });
-            emit({ kind: "text", text: b.text });
+      if (message.type === "assistant") {
+        const content = (message as { message?: { content?: unknown[] } })
+          .message?.content;
+        if (Array.isArray(content)) {
+          for (const block of content) {
+            if (!block || typeof block !== "object") continue;
+            const b = block as {
+              type?: string;
+              name?: string;
+              input?: unknown;
+              text?: string;
+            };
+            if (b.type === "tool_use") {
+              const name = b.name ?? "?";
+              toolCalls.push(name);
+              // Compact arg preview: first ~120 chars of the interesting bits.
+              const preview = JSON.stringify(b.input ?? {}) // structured per call
+                .replace(/environmentId":"[^"]+"/g, 'environmentId":"…"')
+                .slice(1, 140);
+              toolArgs.push(preview);
+              await log({
+                ts: new Date().toISOString(),
+                event: "tool_call",
+                name,
+                argsPreview: preview,
+              });
+              emit({ kind: "tool_call", name, argsPreview: preview });
+            } else if (b.type === "text" && b.text?.trim()) {
+              await log({
+                ts: new Date().toISOString(),
+                event: "text",
+                text: b.text.slice(0, 500),
+              });
+              emit({ kind: "text", text: b.text });
+            }
           }
         }
       }
+
+      if (message.type === "result") {
+        const res = message as unknown as {
+          subtype?: string;
+          session_id?: string;
+          result?: string;
+        };
+        sessionId = res.session_id ?? sessionId;
+        isError = res.subtype !== "success";
+        report = res.result ?? "";
+        if (isError) diagnostics += ` | result=${res.subtype}`;
+        await log({
+          ts: new Date().toISOString(),
+          event: "done",
+          isError,
+          report,
+          sessionId,
+        });
+        emit({
+          kind: "done",
+          isError,
+          toolCalls: toolCalls.length,
+          ms: Date.now() - t0,
+        });
+      }
     }
 
-    if (message.type === "result") {
-      const res = message as unknown as {
-        subtype?: string;
-        session_id?: string;
-        result?: string;
-      };
-      sessionId = res.session_id ?? sessionId;
-      isError = res.subtype !== "success";
-      report = res.result ?? "";
-      if (isError) diagnostics += ` | result=${res.subtype}`;
-      await log({
-        ts: new Date().toISOString(),
-        event: "done",
-        isError,
-        report,
-        sessionId,
-      });
-      emit({
-        kind: "done",
-        isError,
-        toolCalls: toolCalls.length,
-        ms: Date.now() - t0,
-      });
-    }
+  } finally {
+    await p1.close().catch(() => {});
   }
 
-  return { sessionId, report, toolCalls, toolArgs, isError, diagnostics, logPath };
+  return { sessionId, report, toolCalls, toolArgs, isError, diagnostics, logPath, denied };
 }

@@ -22,9 +22,20 @@ import { resolveToken } from "./auth.js";
 import { envIdFromMcpUrl } from "./launch.js";
 import { McpToolClient } from "./engines/mcp-client.js";
 
+// Operator guardrails, delivered by the server itself: MCP clients (Claude
+// Code among them) put a server's `instructions` into the operating agent's
+// system prompt, so every deployment gets them with nothing to configure.
+const OPERATOR_INSTRUCTIONS = `
+p1-orchestrator is this session's path to PingOne. Guardrails for using it:
+- Make PingOne changes only through dispatch_specialist. Do not reach PingOne any other way (direct API calls with curl or scripts, SDKs, pingcli, or a token found anywhere), even when the user has asked for the outcome. The specialists' gates are the safety boundary; another route bypasses them.
+- When a specialist refuses, stops, or reports that something is out of its scope, relay that to the user. Do not finish the action through another route.
+- Deletes need allowDestructive: true on dispatch_specialist. If a dispatch reports a refused delete, confirm with the user that they want it deleted, then re-dispatch with allowDestructive: true.
+- When a specialist hands an action back as console-only, it is for the human to do in the PingOne admin console. Tell the user; do not perform it.
+`.trim();
+
 const server = new Server(
   { name: "p1-orchestrator", version: "0.1.0" },
-  { capabilities: { tools: {} } },
+  { capabilities: { tools: {} }, instructions: OPERATOR_INSTRUCTIONS },
 );
 
 // FIXED-SURFACE exposure: the client sees three fixed tools, forever.
@@ -307,6 +318,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     out.toolCalls.forEach((c, i) => {
       lines.push(`---   ${c} ${out.toolArgs[i] ?? ""}`);
     });
+    // Gate refusals, stated by the orchestrator itself rather than left to
+    // the specialist's own report, so the operator always sees them.
+    for (const d of out.denied ?? []) {
+      lines.push(`--- REFUSED by orchestrator gate: ${d.tool}. ${d.reason}`);
+    }
+    if (out.denied?.some((d) => /allowDestructive/.test(d.reason))) {
+      lines.push(
+        "--- To perform the delete: confirm with the user, then re-dispatch with allowDestructive: true. Do not perform it any other way.",
+      );
+    }
     lines.push(`--- run log: ${out.logPath}`);
     if (out.sessionId) {
       lines.push(`--- session: ${out.sessionId} (pass back to continue)`);
