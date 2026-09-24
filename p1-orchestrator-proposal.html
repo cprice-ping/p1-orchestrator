@@ -582,11 +582,38 @@
       registry here is the stepping stone, not the end state.</li>
   </ol>
 
-  <h2 id="why">Why this wins on context and cost</h2>
+  <h2 id="why">Why this wins on context, cost — and agent quality</h2>
+  <p>Measured against the live catalog (2026-09-24): the 78-tool schema set
+    weighs <strong>~86,800 tokens</strong> (5,600 in descriptions, 81,200 in
+    JSON Schemas — the schemas are 15× the descriptions). That number is the
+    flat pattern's per-turn bill, and it never leaves the conversation:</p>
+  <table>
+    <tr><th></th><th>Flat (78 tools + skills)</th><th>Routed (this pattern)</th></tr>
+    <tr><td><strong>Client sees, every turn</strong></td>
+      <td>~86,800 tokens — all 78 schemas ride along</td>
+      <td>~120 tokens — the fixed tool one-liners</td></tr>
+    <tr><td><strong>20-turn conversation</strong></td>
+      <td>~1.7M tokens of schema freight</td>
+      <td>~2,400 tokens (0.14%)</td></tr>
+    <tr><td><strong>Working context per task</strong></td>
+      <td>86,800 + triggered skill + every intermediate API response, which
+        <em>stays</em> for the rest of the conversation</td>
+      <td>5–29k, task-scoped: the subset (1,778 for env_provisioning;
+        22,000 for app_onboarding) + playbook + distilled corpus context</td></tr>
+  </table>
+  <p>Skills don't change this — a SKILL.md loads when triggered, but the 78
+    schemas never leave. Skills add context; they cannot remove it. The
+    structural asymmetry: <strong>schemas are per-turn rent; a playbook is a
+    one-time purchase.</strong> The routed pattern replaces rent with a
+    purchase — and the flat pattern's quiet multiplier is payload
+    accumulation: six tool calls in flat mode leave six full API responses
+    embedded in the conversation forever; the specialist burns its own
+    bounded context on them and returns a compact report. The orchestrator
+    accumulates summaries, not payloads.</p>
   <ul>
-    <li><strong>Client context.</strong> The orchestrating agent holds 2 tool
-      one-liners instead of 78 full schemas — and the playbooks never enter
-      the client's context at all.</li>
+    <li><strong>Client context.</strong> The orchestrating agent holds the
+      fixed tool one-liners instead of 78 full schemas — and the playbooks
+      never enter the client's context at all.</li>
     <li><strong>Specialist context is bounded and disposable.</strong> Each
       run starts fresh with its subset and procedure; the orchestrator only
       accumulates compact summaries, while a flat setup accumulates every
@@ -598,6 +625,52 @@
     <li><strong>Upstream-proof.</strong> Ping adds tool #79 → the deny list
       recomputes. Nothing in this repo changes.</li>
   </ul>
+
+  <h3>The token win is the derivative; the product is procedure</h3>
+  <p>The deeper question: does routing make an agent <em>better</em> at
+    PingOne, not just cheaper? The evidence says yes — because routing
+    replaces <strong>runtime inference with written procedure</strong>. The
+    flat agent's hidden workload on every task: know all 78 tools exist,
+    choose among them, infer the chaining order, discover platform
+    constraints by hitting them. The specialist's: follow the playbook.
+    The choice burden moves from inference at runtime (what LLMs are worst
+    at — choosing among 78 similar things under pressure) to curation at
+    build time (what playbooks are best at — never guessing). Lived
+    evidence from this validation, three examples:</p>
+  <ul>
+    <li><strong>Constraints arrive before the first call, not after a 400.</strong>
+      The token-exchange A/B (above): the unequipped run learned
+      "workers can't hold custom-resource grants" from
+      <code>CONSTRAINT_VIOLATION</code>, burned calls, dry-run-deleted its
+      own stub, rebuilt. The equipped run was correct first-pass. Equipping
+      converts recovery stories into first-pass stories — a success-rate
+      argument, not just a cost argument.</li>
+    <li><strong>The playbook beat its own author.</strong> The audit
+      question, answered twice: the author's hand-written API call used
+      <code>since=</code> — silently narrowed to ~24h (55 events); the
+      specialist, following its always-set-explicit-dates rule, swept the
+      true two-day window (73 events) and caught a chapter the direct call
+      missed. Procedure beats inference, measurably.</li>
+    <li><strong>Failure discipline: report, don't improvise.</strong> On the
+      403 from a freshly created environment, the specialist refused to
+      invent scope UUIDs, reported the permission shape, and stopped — the
+      bounded loop plus fail-closed gate made the honest dead-end the path
+      of least resistance. Flat generalists under pressure guess, or retry
+      through the error.</li>
+  </ul>
+  <p>The honest ledger: flat still wins for open exploration ("what's
+    possible across all services?") and novel cross-service improvisation —
+    that's what the directory's answer is for (the client browses the
+    specialist one-liners; the 78-schema floor is paid only where needed).
+    And routing has its own edges: routing is only as good as the one-liner,
+    static subsets need curation (the launcher's validation gate catches a
+    bad subset loudly, at launch), latency is 20–60s per dispatch, and a
+    specialist given an out-of-scope task stops honestly rather than
+    improvising — a feature for admin workflows, maddening for tinkering.
+    One-line version: <strong>the flat pattern asks the model to rediscover
+    PingOne every task; the routed pattern lets it inherit what was learned
+    the hard way, and spend its inference budget on the one thing that is
+    actually novel — this task.</strong></p>
 
   <h2 id="deploy">Local is the demo; hosting is Product's call</h2>
   <p>The install story is the composition story: <strong>attach one server,
