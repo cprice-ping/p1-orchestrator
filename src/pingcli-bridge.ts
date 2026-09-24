@@ -71,6 +71,21 @@ export const PROTECT_FALLBACKS: FallbackSpec = {
   },
 };
 
+/** Supply-gap fallbacks for org-level operations the MCP catalog doesn't
+ *  carry but the platform API permits. These exist so the GATED PATH is
+ *  complete: a capability with no tool on the path doesn't disappear —
+ *  its exercise migrates off the path (the operator's agent calls the
+ *  API directly, ungoverned). Absence is bypass pressure, not a boundary.
+ *  Deletion stays destructive-gated (allowDestructive) like every other
+ *  delete* tool — the same constraint, not a special exemption. */
+export const ENV_FALLBACKS: FallbackSpec = {
+  deleteEnvironment: {
+    args: ["pingone", "api", "environments/<ENV_ID>"],
+    description:
+      "Delete a sandbox PingOne environment. DESTRUCTIVE and irreversible — deletes the environment and everything in it. Requires the dispatch to carry allowDestructive; pass the environment ID as the 'positional' argument. Production environments require delete-pending status first (not supported here).",
+  },
+};
+
 /** Run one pingcli command; return parsed output or a rich error.
  *  Profile is PINNED (default: prod) so the bridge's identity is fixed
  *  regardless of the user's active CLI profile — one worker, one scope,

@@ -707,20 +707,30 @@
       the specialists are bounded by the gates — but in this local demo, the
       operator's other in-session agents hold the person token directly and
       sit at the human's power level with none of the specialist's
-      constraints. The pattern's answer is a deployment rule, not code:
-      <strong>the orchestrator is the agent's only P1 surface</strong> — the
-      server holds the tokens so no model ever touches one, and no
-      credential sits at rest for another process to read. The consent
-      boundary is the SSO session: the first AuthN is interactive; later
-      requests mint silently while that session lives — so another agent's
-      direct P1 access rides the session the human established, at session
       granularity. Per-action consent is what the specialist gates provide,
       on the gated path. Hosted, that's
       automatic (per-user token stores, ingress auth — the graduation
-      checklist below); locally, it is a stated caveat. A capability kept
-      off the agent path (environment deletion, production creation —
-      Ping's own catalog boundary) cannot be re-added "so it can be
-      gated"; that would be manufacturing power to then fence it.</li>
+      checklist below); locally, it is a stated caveat.</li>
+    <li><strong>Boundaries live in the platform, not the catalog.</strong>
+      This session taught the difference the hard way. An operation the
+      platform API <em>refuses</em> is a real boundary — respect it. But the
+      MCP catalog's mere <em>silence</em> about an API-possible operation is
+      a supply gap, not a boundary: the ungoverned power exists either way,
+      and keeping it off the gated path only guarantees its exercise
+      migrates off the path (the operator's agent calls the API directly,
+      ungoverned — demonstrated live, twice, during environment cleanup).
+      <strong>Every legitimate capability belongs ON the gated path</strong>,
+      bound by the same constraints as every other tool — environment
+      deletion now ships as a supply-gap bridge tool, destructive-gated
+      (allowDestructive, inventory-before-delete, explicit confirmation,
+      production excluded by the platform's own delete-pending rule). The
+      gated path binds agents only if it is the path of least resistance —
+      and it is only that if it is complete. One open question this raises
+      for the product team: if MCP enablement on an environment is meant to
+      bound what the token can do <em>through the MCP tools</em>, the same
+      token may still act through the raw API beyond that bound — worth
+      deciding whether enablement should gate the token's permissions or
+      only the tool surface.</li>
     <li><strong>One extra LLM hop per dispatch.</strong> Trivial single-call
       tasks lose; multi-step workflows win. The probe data here covers the
       multi-step cases — where the win is real.</li>
