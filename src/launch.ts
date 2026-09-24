@@ -66,6 +66,8 @@ export interface LaunchOutput {
   logPath: string;
   /** Tool calls the gate refused (tool name + reason), for the caller. */
   denied?: { tool: string; reason: string }[];
+  /** Tool calls that failed for other reasons (API, validation, readback). */
+  errors?: { tool: string; message: string }[];
 }
 
 /**

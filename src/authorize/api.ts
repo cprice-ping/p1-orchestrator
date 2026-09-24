@@ -27,6 +27,11 @@ export interface Context {
 export interface Request { method: 'GET'|'POST'|'PUT'|'DELETE'; path: string; body?: Obj; mediaType?: string }
 export type Transport = (request: Request) => Promise<unknown>;
 
+/** A refusal by an orchestrator gate (environment, mode, capability, delete
+ *  authorization) as opposed to an API or validation failure. Callers report
+ *  the two differently: a refusal means stop and ask; an error means inspect. */
+export class GateError extends Error {}
+
 export function contextFromEnv(environmentId: string, mode: unknown = 'inspect', allowDestructive = false): Context {
   const c: Context = { environmentId, mode: modeSchema.parse(mode), allowDestructive,
     allowedEnvironments: (process.env.AUTHORIZE_ENVIRONMENTS ?? '').split(',').map(x=>x.trim()).filter(Boolean),
@@ -34,11 +39,19 @@ export function contextFromEnv(environmentId: string, mode: unknown = 'inspect',
   };
   validateContext(c); return c;
 }
+/** Read-only inspect works out of the box on the dispatch's environment, like
+ *  every other specialist; an AUTHORIZE_ENVIRONMENTS allowlist, when set, still
+ *  pins it. Author/deploy/evaluate always require the environment to be listed. */
 export function validateContext(c: Context) {
   uuid.parse(c.environmentId);
-  if (!c.allowedEnvironments.includes(c.environmentId)) throw new Error('Target environment is not in AUTHORIZE_ENVIRONMENTS.');
   modeSchema.parse(c.mode);
-  if (!c.capabilities.includes(c.mode)) throw new Error(`Mode ${c.mode} is disabled by AUTHORIZE_CAPABILITIES.`);
+  const listed = c.allowedEnvironments.includes(c.environmentId);
+  if (c.mode === 'inspect' ? c.allowedEnvironments.length > 0 && !listed : !listed) {
+    throw new GateError(c.mode === 'inspect'
+      ? 'Target environment is not in AUTHORIZE_ENVIRONMENTS.'
+      : `Target environment is not in AUTHORIZE_ENVIRONMENTS; ${c.mode} mode requires it to be listed.`);
+  }
+  if (!c.capabilities.includes(c.mode)) throw new GateError(`Mode ${c.mode} is disabled by AUTHORIZE_CAPABILITIES.`);
 }
 const collections: Record<string,string> = { policies:'authorizationPolicies', attributes:'authorizationAttributes', services:'authorizationServices', versions:'authorizationVersions', apiServers:'apiServers', decisionEndpoints:'decisionEndpoints' };
 export function route(c: Context, input: ReadInput): string {
@@ -61,18 +74,35 @@ export function route(c: Context, input: ReadInput): string {
   return path + (query.size ? `?${query}` : '');
 }
 const secretKey = /^(authorization|proxy-authorization|client.?secret|access.?token|refresh.?token|id.?token|password|credential|client-token|cookie|set-cookie)$/i;
+const credentialReference = (v: unknown) =>
+  !!v && typeof v === 'object' && !Array.isArray(v) && Object.keys(v).length === 1 && uuid.safeParse((v as Obj).id).success;
 export function sanitize(value: unknown, depth = 0): any {
   if (depth > 40) return '[depth limit]';
   if (Array.isArray(value)) return value.map(x=>sanitize(x,depth+1));
-  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k,v])=>[k,secretKey.test(k) && !(v && typeof v==='object' && !Array.isArray(v) && Object.keys(v).length===1 && uuid.safeParse((v as Obj).id).success) ? '[REDACTED]' : sanitize(v,depth+1)]));
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k,v])=>[k,secretKey.test(k) && !credentialReference(v) ? '[REDACTED]' : sanitize(v,depth+1)]));
   if (typeof value === 'string') {
     try { const parsed = JSON.parse(value); if (parsed && typeof parsed === 'object') return JSON.stringify(sanitize(parsed,depth+1)); } catch {}
     return value.replace(/Bearer\s+[^\s"'\\]+/gi,'Bearer [REDACTED]').replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g,'[REDACTED JWT]');
   }
   return value;
 }
+const secretString = /Bearer\s+[^\s"'\\]+|\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/i;
+/** Walks the value looking for what sanitize() would redact. Checked directly,
+ *  not by comparing re-serialized copies: sanitize() normalizes JSON inside
+ *  strings, so a formatted statement payload would otherwise read as a secret. */
+function containsSecret(value: unknown, depth = 0): boolean {
+  if (depth > 40) return false;
+  if (Array.isArray(value)) return value.some(x => containsSecret(x, depth + 1));
+  if (value && typeof value === 'object') return Object.entries(value).some(([k, v]) =>
+    (secretKey.test(k) && !credentialReference(v)) || containsSecret(v, depth + 1));
+  if (typeof value === 'string') {
+    if (secretString.test(value)) return true;
+    try { const parsed = JSON.parse(value); if (parsed && typeof parsed === 'object') return containsSecret(parsed, depth + 1); } catch {}
+  }
+  return false;
+}
 function assertNoSecrets(value: unknown) {
-  if (JSON.stringify(sanitize(value)) !== JSON.stringify(value)) throw new Error('Secret/token fields are not accepted through the model. Use preconfigured credential references.');
+  if (containsSecret(value)) throw new Error('Secret/token fields are not accepted through the model. Use preconfigured credential references.');
   if (JSON.stringify(value).includes('[REDACTED')) throw new Error('Cannot write a redacted representation.');
 }
 
@@ -119,7 +149,7 @@ function guardExisting(current: Obj, body: Obj|undefined, allowDelete: boolean) 
   if (current.version !== undefined && current.version!==body.version)throw new Error('Stale or missing resource version; re-read before replacing.');
   for(const child of current.children ?? []) {
     const next = (body.children ?? []).find((x:Obj)=>x.id===child.id);
-    if(!next) {if(!allowDelete)throw new Error('Replacement removes an existing child; deletion is not authorized.');}
+    if(!next) {if(!allowDelete)throw new GateError('Replacement removes an existing child; deletion is not authorized.');}
     else {
       if(child.version!==undefined && next.version!==child.version)throw new Error('Stale or missing child version.');
       guardExisting(child,next,allowDelete);
@@ -152,8 +182,8 @@ export class AuthorizeApi {
   async change(raw: unknown) {
     const i=changeSchema.parse(raw), c=this.context; validateContext(c);
     const needed=i.action==='deploy'||i.action==='tag'||i.action==='attach' ? 'deploy' : i.action==='evaluate' ? 'evaluate' : 'author';
-    if(c.mode!==needed || !c.capabilities.includes(needed))throw new Error(`This operation requires ${needed} mode and operator capability.`);
-    if(i.action==='delete' && (!c.allowDestructive || !c.capabilities.includes('delete')))throw new Error('Delete is disabled.');
+    if(c.mode!==needed || !c.capabilities.includes(needed))throw new GateError(`This operation requires ${needed} mode and operator capability.`);
+    if(i.action==='delete' && (!c.allowDestructive || !c.capabilities.includes('delete')))throw new GateError('Delete is disabled: it requires allowDestructive on the dispatch and the delete capability in AUTHORIZE_CAPABILITIES.');
     if(i.body)assertNoSecrets(i.body);
     if(i.resource==='policies' && i.action==='replace' && i.body?.parent)throw new Error('Policy replacement cannot change parent placement.');
     const path=route(c,{resource:i.resource,id:i.id,parentId:i.parentId});

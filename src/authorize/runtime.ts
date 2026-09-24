@@ -1,4 +1,4 @@
-import { AuthorizeApi, readSchema, changeSchema, sanitize, type Context, type Transport } from './api.js';
+import { AuthorizeApi, GateError, readSchema, changeSchema, sanitize, type Context, type Transport } from './api.js';
 import { reference, referenceSchema } from './knowledge.js';
 import { z } from 'zod';
 export function authorizeRuntime(context: Context, transport: Transport) {
@@ -13,14 +13,14 @@ export function authorizeRuntime(context: Context, transport: Transport) {
     async call(name:string,args:unknown) {
       const spec=specs.find(s=>s.name===name);
       try {
-        if(!spec || (name==='authorize_change'&&context.mode==='inspect'))throw new Error('Tool not available in this dispatch.');
+        if(!spec || (name==='authorize_change'&&context.mode==='inspect'))throw new GateError('Tool not available in this dispatch.');
         const result=await spec.run(args);
         const incomplete=typeof result==='object' && result!==null && (('requestedFieldsMatch' in result && result.requestedFieldsMatch===false)||('deploymentVerified' in result && result.deploymentVerified===false));
         return {content:[{type:'text' as const,text:typeof result==='string'?result:JSON.stringify(sanitize(result))}],isError:incomplete};
       } catch(err) {
         // Schema errors report structure only; suppress echoed input values.
         const message=err instanceof z.ZodError?'Invalid tool input schema. Use documented resource/action and UUID fields only.':err instanceof Error?err.message:'Tool failed';
-        return {content:[{type:'text' as const,text:String(sanitize(message))}],isError:true};
+        return {content:[{type:'text' as const,text:String(sanitize(message))}],isError:true,refused:err instanceof GateError};
       }
     },
   };

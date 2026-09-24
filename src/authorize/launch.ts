@@ -22,6 +22,7 @@ export async function launchAuthorize(input:LaunchInput,def:SpecialistDef,callba
   if(!['claude','gemini'].includes(engine))throw new Error('Unsupported specialist engine.');
   const toolCalls:string[]=[], toolArgs:string[]=[];
   const denied:{tool:string;reason:string}[]=[];
+  const errors:{tool:string;message:string}[]=[];
   const dir=join(homedir(),'.p1-orchestrator','runs');await mkdir(dir,{recursive:true,mode:0o700});
   const logPath=join(dir,`${Date.now()}-authorize-${randomUUID()}.ndjson`);
   const log=async(event:unknown)=>appendFile(logPath,JSON.stringify(event)+'\n',{mode:0o600});
@@ -44,7 +45,12 @@ export async function launchAuthorize(input:LaunchInput,def:SpecialistDef,callba
       if(readbackVerified)verifiedChanges++;
     }
     await log({event:'tool',name,isError:result.isError,...(name==='authorize_change'?{readbackVerified}:{})});
-    if(result.isError){failed=true;denied.push({tool:name,reason:result.content[0].text});}
+    if(result.isError){
+      failed=true;
+      // Gate refusals and API/validation errors are reported separately.
+      if(result.refused)denied.push({tool:name,reason:result.content[0].text});
+      else errors.push({tool:name,message:result.content[0].text});
+    }
     return result;
   };
   callbacks?.onEvent?.({kind:'init',servers:'authorize CLI adapter',visibleMcpTools:runtime.specs.length});
@@ -100,5 +106,5 @@ export async function launchAuthorize(input:LaunchInput,def:SpecialistDef,callba
   report=String(sanitize(outcome.report));isError=outcome.isError;
   await log({event:'done',isError,toolCalls:toolCalls.length,changeAttempts,changeSucceeded,verifiedChanges,environmentId:context.environmentId,mode:context.mode});
   callbacks?.onEvent?.({kind:'done',isError,toolCalls:toolCalls.length,ms:Date.now()-start});
-  return {sessionId:'',report,toolCalls,toolArgs,isError,logPath,denied,diagnostics:`engine=${engine}; sdkMcp=${authorizeMcpStatus}; assistantTextOnlyTurns=${assistantTextOnlyTurns}; assistantToolUseTurns=${assistantToolUseTurns}; changeAttempts=${changeAttempts}; changeSucceeded=${changeSucceeded}; verifiedChanges=${verifiedChanges}; orchestrator OAuth authentication; fresh dispatch; any tool failure marks the run incomplete`};
+  return {sessionId:'',report,toolCalls,toolArgs,isError,logPath,denied,errors,diagnostics:`engine=${engine}; sdkMcp=${authorizeMcpStatus}; assistantTextOnlyTurns=${assistantTextOnlyTurns}; assistantToolUseTurns=${assistantToolUseTurns}; changeAttempts=${changeAttempts}; changeSucceeded=${changeSucceeded}; verifiedChanges=${verifiedChanges}; orchestrator OAuth authentication; fresh dispatch; any tool failure marks the run incomplete`};
 }

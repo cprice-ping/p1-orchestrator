@@ -1,4 +1,20 @@
-# Personal fork changes
+# Changes
+
+## 2026-09-24 — Authorize review fixes
+
+- Write bodies are checked for secrets field by field. The previous check compared
+  re-serialized copies, so a statement payload holding formatted JSON (for
+  example `'{"a": 1}'`) was rejected as a secret.
+- Gate refusals (environment, mode, capability, delete authorization) are now a
+  distinct error type. The dispatch result lists them as `REFUSED by orchestrator
+  gate` and lists API, validation and readback failures separately as
+  `tool error (not a gate refusal)`. Before, every tool error was shown as a
+  gate refusal.
+- `inspect` no longer needs `AUTHORIZE_ENVIRONMENTS`: it runs on the dispatch's
+  environment like other specialists, and is still pinned when the allowlist is
+  set. `author`, `deploy` and `evaluate` still require the environment to be listed.
+- Documentation no longer describes this as a personal fork; the decision record
+  now describes the OAuth approach that shipped. 21 tests pass.
 
 ## 2026-09-24 — Authorize author-mode tool discovery and run evidence
 
@@ -36,5 +52,5 @@ fresh versions, retained children, exact Custom-node placement and readback.
 Build and 13 focused tests pass. Four bounded collection reads, a direct API read
 using the orchestrator OAuth token, and one Claude specialist read were live-verified
 in the approved environment. No live changes, deletions, deployment or evaluation
-occurred. See docs/PERSONAL_AUTHORIZE.md for exact evidence, configuration,
+occurred. See docs/AUTHORIZE.md for exact evidence, configuration,
 limitations and the next bounded verification.

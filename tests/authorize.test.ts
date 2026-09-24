@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { AuthorizeApi, createOAuthTransport, managementApiBase, route, sanitize, type Context, type Request } from '../src/authorize/api.js';
+import { AuthorizeApi, GateError, createOAuthTransport, managementApiBase, route, sanitize, type Context, type Request } from '../src/authorize/api.js';
 import { authorizeRuntime } from '../src/authorize/runtime.js';
 import { systemPlaybook,reference,referenceNames } from '../src/authorize/knowledge.js';
 const env='11111111-1111-4111-8111-111111111111',id='22222222-2222-4222-8222-222222222222',childId='33333333-3333-4333-8333-333333333333';
@@ -98,4 +98,24 @@ test('replacement cannot remove nested rules through an unchanged parent child i
  const api=new AuthorizeApi(ctx('author'),async r=>{requests.push(r);return current;});
  await assert.rejects(api.change({action:'replace',resource:'policies',id,body:{id,version:'v1',children:[{id:childId,version:'v2',children:[]}]}}),/removes/);
  assert.deepEqual(requests.map(x=>x.method),['GET']);
+});
+
+test('formatted JSON-string payloads are accepted; secrets inside them are not',async()=>{
+ const api=new AuthorizeApi(ctx('author'),async r=>r.method==='POST'?{id,...r.body}:{id,type:'POLICY',name:'p'});
+ await api.change({action:'create',resource:'policies',body:{type:'POLICY',name:'p',statements:[{code:'x',payload:'{\n  "a": 1\n}'}]}});
+ await api.change({action:'create',resource:'policies',body:{type:'POLICY',name:'p',password:{id:childId}}});
+ for(const payload of ['{"headers": {"Authorization": "x"}}','Bearer opaque-secret','eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2ln'])
+  await assert.rejects(api.change({action:'create',resource:'policies',body:{type:'POLICY',name:'p',statements:[{code:'x',payload}]}}),/Secret/);
+});
+test('inspect needs no allowlist; writes do; a set allowlist still pins inspect',()=>{
+ const open=(mode:Context['mode'],allowedEnvironments:string[]=[])=>new AuthorizeApi({...ctx(mode),allowedEnvironments},async()=>({}));
+ open('inspect');
+ for(const mode of ['author','deploy','evaluate'] as const)assert.throws(()=>open(mode),e=>e instanceof GateError&&/requires it to be listed/.test(e.message));
+ assert.throws(()=>open('inspect',[id]),e=>e instanceof GateError);
+});
+test('gate refusals are flagged separately from API errors',async()=>{
+ const refused=await authorizeRuntime(ctx('author'),async()=>({id})).call('authorize_change',{action:'delete',resource:'policies',id});
+ assert.equal(refused.isError,true);assert.equal(refused.refused,true);
+ const failed=await authorizeRuntime(ctx(),async()=>{throw new Error('PingOne Management API returned HTTP 404; response details are withheld.');}).call('authorize_read',{resource:'policies',id});
+ assert.equal(failed.isError,true);assert.equal(failed.refused,false);
 });

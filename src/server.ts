@@ -335,6 +335,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     for (const d of out.denied ?? []) {
       lines.push(`--- REFUSED by orchestrator gate: ${d.tool}. ${d.reason}`);
     }
+    for (const e of out.errors ?? []) {
+      lines.push(`--- tool error (not a gate refusal): ${e.tool}. ${e.message.slice(0, 300)}`);
+    }
     if (out.denied?.some((d) => /allowDestructive/.test(d.reason))) {
       lines.push(
         "--- To perform the delete: confirm with the user, then re-dispatch with allowDestructive: true. Do not perform it any other way.",

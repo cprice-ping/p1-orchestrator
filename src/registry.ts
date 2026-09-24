@@ -15,7 +15,7 @@
  */
 
 export interface SpecialistDef {
-  /** Personal Authorize adapter; uses the orchestrator's in-memory OAuth token. */
+  /** Authorize Management API adapter; uses the orchestrator's in-memory OAuth token. */
   transport?: "authorize-oauth";
   /** MCP tool name exposed by the orchestrator server, snake_case. */
   name: string;

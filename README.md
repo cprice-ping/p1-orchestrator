@@ -208,17 +208,19 @@ with arg previews, as they happen), a per-run NDJSON audit log at
 `~/.p1-orchestrator/runs/`, and a resumable `session_id` for post-hoc
 interrogation of the specialist's own reasoning.
 
-## Personal Authorize specialist
+## Authorize specialist
 
-This fork includes an executable `authorize_policy` specialist with the complete
-EA Authorize skill and the orchestrator's existing OAuth authentication. See the
-[personal setup and verification guide](docs/PERSONAL_AUTHORIZE.md). Inspect is
-the default; authoring, deployment and evaluation use explicit modes. A direct
-OAuth-authenticated Atlas API read and one Claude dispatch are verified; writes
-are mock-tested only.
+`authorize_policy` carries the complete EA Authorize skill and calls the PingOne
+Management API with the orchestrator's existing OAuth token, which never leaves
+the server process. See the [setup and verification guide](docs/AUTHORIZE.md).
+Read-only `inspect` is the default and needs no configuration; authoring,
+deployment and evaluation are explicit modes that must be enabled in
+`AUTHORIZE_CAPABILITIES` for environments listed in `AUTHORIZE_ENVIRONMENTS`. A
+direct OAuth-authenticated API read and one Claude dispatch are verified live;
+writes are mock-tested only.
 
-The [earlier draft](docs/authorize-specialist/README.md) remains as historical
-coverage analysis and is not the active implementation on this branch.
+The [earlier draft](docs/authorize-specialist/README.md) remains as the
+coverage analysis behind this design; it is not the active implementation.
 
 ## License
 

@@ -1,6 +1,6 @@
-# Personal Authorize specialist
+# Authorize specialist
 
-Status: implemented on the personal fork. OAuth transport has passed a bounded
+Status: implemented. OAuth transport has passed a bounded
 direct Atlas API read and a Claude specialist read (2026-09-24). No live writes,
 deletions, deployment, or evaluation were performed. No tenant configuration or
 credentials are included in this repository.
@@ -9,7 +9,7 @@ credentials are included in this repository.
 
 `authorize_policy` is an active specialist, with the EA Authorize skill loaded as
 its system context and all seven full references available through a fixed
-`authorize_reference` tool. This replaces the inventory-only draft for this branch.
+`authorize_reference` tool. It replaces the inventory-only draft.
 The older `docs/authorize-specialist/` material describes the earlier PR draft.
 
 The specialist has three internal tools:
@@ -34,7 +34,10 @@ request; the specialist's environment allowlist and mode checks still apply.
 Authorize now requires the standard `P1_MCP_URL` so the orchestrator can sign in
 to the configured administrator environment and select the matching API region.
 The task environment is supplied explicitly or through `P1_ENVIRONMENT_ID` and
-must also be in `AUTHORIZE_ENVIRONMENTS`. There is no separate PingCLI profile.
+must be in `AUTHORIZE_ENVIRONMENTS` for `author`, `deploy` and `evaluate`.
+Read-only `inspect` works without any Authorize configuration, like every other
+specialist; if `AUTHORIZE_ENVIRONMENTS` is set, it pins `inspect` too. There is
+no separate PingCLI profile.
 Both Claude and Gemini use the same Authorize runtime and permission checks; only
 Claude has a live model-dispatch verification here.
 
@@ -57,7 +60,7 @@ Provide configuration to the server process, not through model tool arguments:
 | Variable | Purpose |
 |---|---|
 | `P1_MCP_URL` | Standard PingOne MCP endpoint; its administrator environment is used for OAuth login and its region selects the Management API host |
-| `AUTHORIZE_ENVIRONMENTS` | Comma-separated exact environment UUID allowlist |
+| `AUTHORIZE_ENVIRONMENTS` | Comma-separated exact environment UUID allowlist. Required for `author`/`deploy`/`evaluate`; optional for `inspect` (pins it when set) |
 | `P1_ENVIRONMENT_ID` | Default dispatch target UUID |
 | `AUTHORIZE_CAPABILITIES` | Enabled modes; default `inspect`. Can include `author,deploy,evaluate`; omit `delete` to disable all deletions |
 | `SPECIALIST_ENGINE` | `claude` (default) or `gemini` |
@@ -70,8 +73,6 @@ copy another tenant's identifiers.
 Attach `node /absolute/path/to/this/checkout/dist/server.js` as a stdio MCP server
 in your client, with the variables above. Paths here are examples, not hardcoded
 runtime dependencies. `knowledge/` and `specialists/` must remain beside `dist/`.
-No changes to the upstream author's installation or the existing draft PR are
-required to use this fork.
 
 Example dispatch (substitute an allowed environment):
 
@@ -89,17 +90,19 @@ or AAM deployment use `deploy`; for a direct decision request use `evaluate`.
 Each mode must also be enabled by the operator. An agent-supplied mode is not human
 approval: the calling agent must stay within the user's task authorization.
 `allowDestructive` alone cannot enable deletion; the operator must separately
-include `delete` in capabilities. The personal Atlas setup excludes it.
+include `delete` in capabilities.
 An `author` edit can affect an always-current endpoint immediately even without
 an explicit deployment, so inspect effective bindings first.
 
 ## Verification
 
 - `npm run build`: pass.
-- `npm test`: 13 focused tests pass, including MCP stdio discovery, mode rejection
+- `npm test`: 21 focused tests pass, including MCP stdio discovery, mode rejection
   before authentication, regional URL validation, OAuth header handling and redaction,
   environment/schema boundaries, fresh versions, Custom child preservation/parent
-  links, readback mismatch, and output sanitization.
+  links, readback mismatch, output sanitization, formatted JSON-string payloads,
+  the inspect-without-allowlist default, and gate refusals reported separately
+  from API errors.
 - Direct token check: the orchestrator OAuth flow in the existing administrator
   environment returned HTTP 200 for one Atlas `authorizationPolicies?limit=1` GET.
   Only status and result count were printed.
@@ -127,7 +130,10 @@ payloads. It is a transport check, not a model or policy-enforcement test.
   only an eligible exact `Custom` container can accept new POLICY children, while
   retaining existing children unchanged. Parent and new child links are read back.
 - Requested-field mismatches and failed deployment verification mark the tool/run
-  incomplete. Configuration readback does not prove a live decision or enforcement.
+  incomplete. The dispatch result lists gate refusals (environment, mode,
+  capability, delete authorization) as `REFUSED by orchestrator gate` and other
+  failures (API errors, validation, readback) as `tool error (not a gate
+  refusal)`, so the operator can tell "stop and ask" from "inspect and retry". Configuration readback does not prove a live decision or enforcement.
 - API errors withhold response bodies and never relay bearer tokens. There are no
   automatic mutation retries.
   A timeout after a write is an ambiguous outcome: read state before retrying.
