@@ -1,5 +1,20 @@
 # Personal fork changes
 
+## 2026-09-24 — Authorize author-mode tool discovery and run evidence
+
+Changed `authorize_change`'s body schema to a passthrough object. With the
+installed Claude Agent SDK, the previous Zod record schema made the child MCP
+server's `tools/list` fail, leaving author-mode runs with no tools. A local
+in-memory MCP test now checks that all three author tools list successfully.
+
+Authorize dispatches now record only safe SDK event structure and MCP connection
+status, plus change attempts and readback verification counts. A text-only run
+with zero tool calls, or an author run that stops before `authorize_change`, is
+reported as incomplete instead of success. A configuration change without
+verified readback is also reported as incomplete, with an inspect-before-retry
+message. Build, typecheck, and 18 mocked tests pass. No live PingOne write or
+decision evaluation was performed; existing MCP processes require reconnect.
+
 ## 2026-09-24 — Reuse orchestrator OAuth for Authorize
 
 Removed the separate PingCLI profile requirement. The Authorize adapter now uses

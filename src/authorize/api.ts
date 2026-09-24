@@ -9,7 +9,11 @@ export const readSchema = z.object({
 export const changeSchema = z.object({
   action: z.enum(['create','replace','delete','deploy','tag','attach','evaluate']),
   resource: z.enum(resources), id: uuid.optional(), parentId: uuid.optional(),
-  body: z.record(z.string(), z.unknown()).optional(),
+  // z.record() breaks createSdkMcpServer tools/list in agent-sdk 0.3.278
+  // (undefined.push during zod->JSON-Schema conversion), which silently
+  // leaves the child model with zero tools. A loose empty object accepts
+  // the same bodies (any object with string keys) and converts cleanly.
+  body: z.object({}).passthrough().optional(),
 }).strict();
 export type ReadInput = z.infer<typeof readSchema>;
 export type ChangeInput = z.infer<typeof changeSchema>;

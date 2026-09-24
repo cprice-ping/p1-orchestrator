@@ -10,6 +10,7 @@ import type { SpecialistDef } from '../registry.js';
 import { contextFromEnv, createOAuthTransport, sanitize } from './api.js';
 import { systemPlaybook } from './knowledge.js';
 import { authorizeRuntime } from './runtime.js';
+import { finalizeAuthorizeRun, summarizeSdkMessage } from './run-evidence.js';
 
 export async function launchAuthorize(input:LaunchInput,def:SpecialistDef,callbacks:LaunchCallbacks|undefined,accessToken:string):Promise<LaunchOutput> {
   const context=contextFromEnv(input.environmentId,input.authorizeMode ?? 'inspect',input.allowDestructive);
@@ -25,12 +26,24 @@ export async function launchAuthorize(input:LaunchInput,def:SpecialistDef,callba
   const logPath=join(dir,`${Date.now()}-authorize-${randomUUID()}.ndjson`);
   const log=async(event:unknown)=>appendFile(logPath,JSON.stringify(event)+'\n',{mode:0o600});
   let failed=false, report='', isError=false;
+  let changeAttempts=0, changeSucceeded=0, verifiedChanges=0;
+  let authorizeMcpStatus='not reported', assistantTextOnlyTurns=0, assistantToolUseTurns=0;
   const start=Date.now();
   const call=async(name:string,args:unknown)=>{
     toolCalls.push(name);toolArgs.push('[arguments withheld]');
+    if(name==='authorize_change')changeAttempts++;
     callbacks?.onEvent?.({kind:'tool_call',name,argsPreview:'[arguments withheld]'});
     const result=await runtime.call(name,args);
-    await log({event:'tool',name,isError:result.isError});
+    let readbackVerified=false;
+    if(name==='authorize_change' && !result.isError) {
+      changeSucceeded++;
+      try {
+        const body=JSON.parse(result.content[0].text);
+        readbackVerified=body.requestedFieldsMatch===true && body.readback !== undefined;
+      } catch { /* A non-JSON result cannot establish readback verification. */ }
+      if(readbackVerified)verifiedChanges++;
+    }
+    await log({event:'tool',name,isError:result.isError,...(name==='authorize_change'?{readbackVerified}:{})});
     if(result.isError){failed=true;denied.push({tool:name,reason:result.content[0].text});}
     return result;
   };
@@ -49,6 +62,15 @@ export async function launchAuthorize(input:LaunchInput,def:SpecialistDef,callba
         canUseTool:async(name,args)=>allowed.has(name)?{behavior:'allow',updatedInput:args}:{behavior:'deny',message:'Outside Authorize tool set.'},
       }});
       for await (const msg of stream) {
+        const summary=summarizeSdkMessage(msg);
+        if(summary) {
+          await log({event:'sdk',...summary});
+          if(summary.type==='system')authorizeMcpStatus=summary.authorizeMcpStatus;
+          if(summary.type==='assistant') {
+            if(summary.blockTypes.includes('tool_use'))assistantToolUseTurns++;
+            else if(summary.blockTypes.includes('text'))assistantTextOnlyTurns++;
+          }
+        }
         if(msg.type==='result') {
           const r=msg as {subtype:string;result?:string};isError=r.subtype!=='success';report=r.result??'';
         }
@@ -70,9 +92,13 @@ export async function launchAuthorize(input:LaunchInput,def:SpecialistDef,callba
       }
       if(!completed){isError=true;report='Turn limit reached; inspect recorded tool outcomes before continuing.';}
     }
-  } catch {isError=true;report='Specialist runtime failed. Check model authentication/configuration privately; inspect tool outcomes before retrying writes.';}
-  report=String(sanitize(report));isError=isError||failed||!report;
-  await log({event:'done',isError,toolCalls:toolCalls.length,environmentId:context.environmentId,mode:context.mode});
+  } catch(err) {
+    isError=true;report='Specialist runtime failed. Check model authentication/configuration privately; inspect tool outcomes before retrying writes.';
+    try {await log({event:'runtime_error',name:err instanceof Error?err.name:'unknown'});} catch { /* Keep the original failure. */ }
+  }
+  const outcome=finalizeAuthorizeRun({mode:context.mode,report,isError:isError||failed,toolCalls,changeAttempts,changeSucceeded,verifiedChanges});
+  report=String(sanitize(outcome.report));isError=outcome.isError;
+  await log({event:'done',isError,toolCalls:toolCalls.length,changeAttempts,changeSucceeded,verifiedChanges,environmentId:context.environmentId,mode:context.mode});
   callbacks?.onEvent?.({kind:'done',isError,toolCalls:toolCalls.length,ms:Date.now()-start});
-  return {sessionId:'',report,toolCalls,toolArgs,isError,logPath,denied,diagnostics:`engine=${engine}; orchestrator OAuth authentication; fresh dispatch; any tool failure marks the run incomplete`};
+  return {sessionId:'',report,toolCalls,toolArgs,isError,logPath,denied,diagnostics:`engine=${engine}; sdkMcp=${authorizeMcpStatus}; assistantTextOnlyTurns=${assistantTextOnlyTurns}; assistantToolUseTurns=${assistantToolUseTurns}; changeAttempts=${changeAttempts}; changeSucceeded=${changeSucceeded}; verifiedChanges=${verifiedChanges}; orchestrator OAuth authentication; fresh dispatch; any tool failure marks the run incomplete`};
 }
