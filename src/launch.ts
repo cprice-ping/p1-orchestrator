@@ -31,6 +31,7 @@ import {
 import { McpToolClient } from "./engines/mcp-client.js";
 
 export interface LaunchInput {
+  authorizeMode?: "inspect" | "author" | "deploy" | "evaluate";
   intent: string;
   environmentId: string;
   /** Follow-up instruction on an existing specialist session. */
@@ -65,6 +66,8 @@ export interface LaunchOutput {
   logPath: string;
   /** Tool calls the gate refused (tool name + reason), for the caller. */
   denied?: { tool: string; reason: string }[];
+  /** Tool calls that failed for other reasons (API, validation, readback). */
+  errors?: { tool: string; message: string }[];
 }
 
 /**
@@ -174,7 +177,13 @@ export async function launchSpecialist(
   input: LaunchInput,
   def: SpecialistDef,
   callbacks?: LaunchCallbacks,
+  accessToken?: string,
 ): Promise<LaunchOutput> {
+  if (def.transport === "authorize-oauth") {
+    const { launchAuthorize } = await import("./authorize/launch.js");
+    if (!accessToken) throw new Error("PingOne OAuth authentication is required for Authorize.");
+    return launchAuthorize(input, def, callbacks, accessToken);
+  }
   let corpusContext = "";
   if (!input.sessionId && def.topics?.length) {
     try {

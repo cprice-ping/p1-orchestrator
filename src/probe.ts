@@ -9,6 +9,7 @@
  */
 
 import { envIdFromMcpUrl, launchSpecialist } from "./launch.js";
+import { resolveToken } from "./auth.js";
 import { listAll } from "./registry.js";
 
 const [name, ...rest] = process.argv.slice(2);
@@ -44,8 +45,11 @@ if (!url || !envId) {
 const t0 = Date.now();
 const engine = (process.env.SPECIALIST_ENGINE ?? "claude").toLowerCase();
 console.error(`  engine: ${engine}${process.env.P1_SPECIALIST_MODEL ? ` (${process.env.P1_SPECIALIST_MODEL})` : ""}`);
+const auth = def.transport === "authorize-oauth"
+  ? await resolveToken(envIdFromMcpUrl(url) ?? "", url)
+  : undefined;
 const out = await launchSpecialist(
-  { intent, environmentId: envId, allowDestructive: process.env.P1_ALLOW_DESTRUCTIVE === "1" },
+  { intent, environmentId: envId, allowDestructive: process.env.P1_ALLOW_DESTRUCTIVE === "1", authorizeMode: (process.env.AUTHORIZE_MODE ?? "inspect") as never },
   def,
   {
     onEvent: (e) => {
@@ -60,6 +64,7 @@ const out = await launchSpecialist(
       }
     },
   },
+  auth?.token,
 );
 const secs = ((Date.now() - t0) / 1000).toFixed(1);
 

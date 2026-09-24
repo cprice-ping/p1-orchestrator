@@ -81,6 +81,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               description:
                 "Optional: the PingOne environment to act on (UUID). Omit to use the deployment default (P1_ENVIRONMENT_ID, else the admin env from P1_MCP_URL). The caller's PingOne permissions decide what is actually reachable — specialists act on whichever env the intent names.",
             },
+            authorizeMode: {
+              type: "string", enum: ["inspect", "author", "deploy", "evaluate"], default: "inspect",
+              description: "Authorize specialist mode. Defaults to read-only inspect. Operator capability settings must also allow the mode. Author edits may affect always-current endpoints immediately. Deployment/evaluation are separate modes.",
+            },
             allowDestructive: {
               type: "boolean",
               description:
@@ -251,8 +255,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 
   try {
+    if (def.transport === "authorize-oauth") {
+      // Reject disabled modes and invalid URLs before prompting for OAuth.
+      const { contextFromEnv, managementApiBase } = await import("./authorize/api.js");
+      contextFromEnv(envId, args?.authorizeMode ?? "inspect", args?.allowDestructive === true);
+      managementApiBase(process.env.P1_MCP_URL ?? "");
+    }
     // Token: env override → cache → refresh → one-time browser flow.
-    // Login env: the MCP URL's admin env if configured, else the task env.
+    // Login env is the MCP URL's administrator environment; the task environment
+    // is separately pinned by the specialist's AUTHORIZE_ENVIRONMENTS allowlist.
     const auth = accessToken
       ? { token: accessToken, via: "env" as const }
       : await resolveToken(
@@ -305,9 +316,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     };
 
     const out = await launchSpecialist(
-      { intent, environmentId: envId, sessionId: sessionIdArg, allowDestructive },
+      { intent, environmentId: envId, sessionId: sessionIdArg, allowDestructive, authorizeMode: args?.authorizeMode as never },
       def,
       { onEvent },
+      auth.token,
     );
 
     const lines = [
@@ -323,6 +335,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     for (const d of out.denied ?? []) {
       lines.push(`--- REFUSED by orchestrator gate: ${d.tool}. ${d.reason}`);
     }
+    for (const e of out.errors ?? []) {
+      lines.push(`--- tool error (not a gate refusal): ${e.tool}. ${e.message.slice(0, 300)}`);
+    }
     if (out.denied?.some((d) => /allowDestructive/.test(d.reason))) {
       lines.push(
         "--- To perform the delete: confirm with the user, then re-dispatch with allowDestructive: true. Do not perform it any other way.",
@@ -335,7 +350,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     if (out.diagnostics) {
       lines.push(`--- diagnostics: ${out.diagnostics}`);
     }
-    return { content: [{ type: "text", text: lines.join("\n") }] };
+    return { content: [{ type: "text", text: lines.join("\n") }], isError: out.isError };
   } catch (err) {
     return {
       content: [
