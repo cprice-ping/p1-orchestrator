@@ -81,6 +81,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               description:
                 "Optional: the PingOne environment to act on (UUID). Omit to use the deployment default (P1_ENVIRONMENT_ID, else the admin env from P1_MCP_URL). The caller's PingOne permissions decide what is actually reachable — specialists act on whichever env the intent names.",
             },
+            authorizeMode: {
+              type: "string", enum: ["inspect", "author", "deploy", "evaluate"], default: "inspect",
+              description: "Authorize specialist mode. Defaults to read-only inspect. Operator capability settings must also allow the mode. Author edits may affect always-current endpoints immediately. Deployment/evaluation are separate modes.",
+            },
             allowDestructive: {
               type: "boolean",
               description:
@@ -253,7 +257,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try {
     // Token: env override → cache → refresh → one-time browser flow.
     // Login env: the MCP URL's admin env if configured, else the task env.
-    const auth = accessToken
+    const auth = def.transport === "authorize-cli" ? undefined : accessToken
       ? { token: accessToken, via: "env" as const }
       : await resolveToken(
           envIdFromMcpUrl(process.env.P1_MCP_URL ?? "") ?? envId,
@@ -305,7 +309,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     };
 
     const out = await launchSpecialist(
-      { intent, environmentId: envId, sessionId: sessionIdArg, allowDestructive },
+      { intent, environmentId: envId, sessionId: sessionIdArg, allowDestructive, authorizeMode: args?.authorizeMode as never },
       def,
       { onEvent },
     );
@@ -335,7 +339,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     if (out.diagnostics) {
       lines.push(`--- diagnostics: ${out.diagnostics}`);
     }
-    return { content: [{ type: "text", text: lines.join("\n") }] };
+    return { content: [{ type: "text", text: lines.join("\n") }], isError: out.isError };
   } catch (err) {
     return {
       content: [

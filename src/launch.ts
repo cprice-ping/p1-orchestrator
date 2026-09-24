@@ -31,6 +31,7 @@ import {
 import { McpToolClient } from "./engines/mcp-client.js";
 
 export interface LaunchInput {
+  authorizeMode?: "inspect" | "author" | "deploy" | "evaluate";
   intent: string;
   environmentId: string;
   /** Follow-up instruction on an existing specialist session. */
@@ -175,6 +176,10 @@ export async function launchSpecialist(
   def: SpecialistDef,
   callbacks?: LaunchCallbacks,
 ): Promise<LaunchOutput> {
+  if (def.transport === "authorize-cli") {
+    const { launchAuthorize } = await import("./authorize/launch.js");
+    return launchAuthorize(input, def, callbacks);
+  }
   let corpusContext = "";
   if (!input.sessionId && def.topics?.length) {
     try {

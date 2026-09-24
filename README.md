@@ -208,13 +208,16 @@ with arg previews, as they happen), a per-run NDJSON audit log at
 `~/.p1-orchestrator/runs/`, and a resumable `session_id` for post-hoc
 interrogation of the specialist's own reasoning.
 
-## Authorize specialist draft
+## Personal Authorize specialist
 
-An [Authorize specialist draft and PingCLI coverage map](docs/authorize-specialist/README.md)
-provides six inventory-read mappings and a policy-authoring playbook. It remains
-outside the active registry: policy writes/deployment need a typed generic-API
-bridge, and the current CLI fallback is available only on the Claude engine.
-Local CLI syntax is verified; live tenant and specialist execution are untested.
+This fork includes an executable `authorize_policy` specialist with the complete
+EA Authorize skill and PingCLI-managed API authentication. See the
+[personal setup and verification guide](docs/PERSONAL_AUTHORIZE.md). Inspect is
+the default; authoring, deployment and evaluation use explicit modes. Live reads
+and one Claude dispatch are verified; writes are mock-tested only.
+
+The [earlier draft](docs/authorize-specialist/README.md) remains as historical
+coverage analysis and is not the active implementation on this branch.
 
 ## License
 

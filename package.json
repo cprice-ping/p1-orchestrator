@@ -9,7 +9,9 @@
     "p1-probe": "tsx src/p1-probe.ts",
     "pin-check": "tsx src/pin-check.ts",
     "server": "node dist/server.js",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "authorize:check": "node --import tsx src/authorize/check.ts"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.0",

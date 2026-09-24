@@ -1,0 +1,15 @@
+# Personal fork changes
+
+## 2026-09-24 — Executable Authorize specialist
+
+Added the complete EA skill and seven named references, an active authorize_policy
+specialist, a PingCLI-authenticated Authorize adapter, and Claude/Gemini engine
+integration. The parent dispatcher supports inspect/author/deploy/evaluate modes;
+delete remains a separate disabled-by-default operator capability. API calls are
+bound to the configured environment/profile, and full policy replacements check
+fresh versions, retained children, exact Custom-node placement and readback.
+
+Build and 13 focused tests pass. Four bounded collection reads and one Claude
+specialist read were live-verified in the approved environment. No live changes,
+deletions, deployment or evaluation occurred. See docs/PERSONAL_AUTHORIZE.md for
+exact evidence, configuration, limitations and the next bounded verification.
