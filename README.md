@@ -208,6 +208,14 @@ with arg previews, as they happen), a per-run NDJSON audit log at
 `~/.p1-orchestrator/runs/`, and a resumable `session_id` for post-hoc
 interrogation of the specialist's own reasoning.
 
+## Authorize specialist draft
+
+An [Authorize specialist draft and PingCLI coverage map](docs/authorize-specialist/README.md)
+provides six inventory-read mappings and a policy-authoring playbook. It remains
+outside the active registry: policy writes/deployment need a typed generic-API
+bridge, and the current CLI fallback is available only on the Claude engine.
+Local CLI syntax is verified; live tenant and specialist execution are untested.
+
 ## License
 
 [MIT](LICENSE) — use it, fork it, ship the pattern. Attribution appreciated,
